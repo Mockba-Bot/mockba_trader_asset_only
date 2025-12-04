@@ -71,7 +71,6 @@ def command_list(m):
     buttons = [
         [InlineKeyboardButton(translate("⚙️ Settings", cid), callback_data="Settings")],
         [InlineKeyboardButton(translate("📡  Process Signal", cid), callback_data="ProcessSignal")],
-        [InlineKeyboardButton(translate("📝  List Bot", cid), callback_data="ListBotStatus")],
         [InlineKeyboardButton(translate("📋  List All Settings", cid), callback_data="ListSettings")]
     ]
     bot.send_message(cid, translate("Available options.", cid), reply_markup=InlineKeyboardMarkup(buttons))
@@ -87,7 +86,6 @@ def callback_handler(call):
 
     options = {
         'List': command_list,
-        'ListBotStatus': listBotStatus,
         'Settings': settings,
         'set_asset': set_asset,
         'set_risk': set_risk,
@@ -107,22 +105,6 @@ def callback_handler(call):
 
 
 # === Helper UI Functions ===
-
-def listBotStatus(m):
-    if m.chat.type != 'private': return
-    cid = m.chat.id
-    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
-
-    markup = types.ReplyKeyboardMarkup(row_width=1)
-    markup.add(types.KeyboardButton('/list'))
-
-    bot.send_message(cid, translate("Listing ...", cid))
-    status = get_bot_status()
-    signal_status = translate('🔴  OFF - NOT TRADING', cid) if status == 0 else translate('🟢  ON - TRADING', cid)
-    bot.send_message(cid, signal_status)
-    bot.send_message(cid, translate('Done', cid), reply_markup=markup)
-
-
 def settings(m):
     if m.chat.type != 'private': return
     cid = m.chat.id
@@ -294,6 +276,8 @@ def ListSettings(m):
     cid = m.chat.id
     if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid):
         return
+    
+    bot.send_message(cid, translate("Fetching all settings...", cid))
 
     settings = get_all_settings()
     if not settings:
