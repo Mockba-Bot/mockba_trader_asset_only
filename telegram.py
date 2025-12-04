@@ -141,7 +141,6 @@ def settings(m):
     }
     buttons = [[InlineKeyboardButton(translate(v, cid), callback_data=k)] for k, v in labels.items()]
     bot.send_message(cid, translate("Available options.", cid), reply_markup=InlineKeyboardMarkup(buttons))
-    bot.send_message(cid, translate("Settings option is under development.", cid))
 
 
 # === Validation & Input Handling ===
