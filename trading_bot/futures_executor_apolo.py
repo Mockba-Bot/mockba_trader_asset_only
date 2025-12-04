@@ -5,7 +5,6 @@ import json
 import threading
 import time
 from dotenv import load_dotenv
-import redis
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import requests
@@ -57,20 +56,6 @@ class RateLimiter:
                 print(f"⏳ Rate limit reached! Sleeping for {sleep_time:.2f} seconds...")
                 time.sleep(sleep_time)
             self.calls.append(time.time())
-            
-# Initialize Redis connection
-redis_url = os.getenv("REDIS_URL")
-if redis_url:
-    try:
-        redis_client = redis.from_url(redis_url)
-        redis_client.ping()
-        logger.info("Connected to Redis successfully")
-    except redis.ConnectionError as e:
-        logger.warning(f"Redis not available (optional caching disabled): {e}")
-        redis_client = None
-else:
-    logger.info("Redis not configured (optional caching disabled)")
-    redis_client = None
 
 # Risk parameters - SAFER VALUES
 RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "0.3"))  # Reduced to 0.3%
@@ -139,7 +124,6 @@ def get_close_price(wallet_address: str, symbol: str = "PERP_NEAR_USDC") -> floa
 def get_futures_exchange_info(symbol: str):
     """
     Fetch asset info from Orderly API including quantity precision, margin, and liquidation parameters.
-    Does NOT use Redis for caching.
     """
     path = f"/v1/public/info/{symbol}"  # Include query string
     url = f"{BASE_URL}{path}"

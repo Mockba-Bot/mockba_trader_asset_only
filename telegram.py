@@ -12,21 +12,10 @@ from db.db_ops import get_bot_status, startStopBotOp, upsert_setting, get_all_se
 from futures_perps.trade.apolo.main import process_signal as run_process_signal  # Rename to avoid conflict
 import json
 from datetime import timedelta
-import redis
 
 # Load environment variables
 load_dotenv()
 initialize_database_tables()
-
-# Redis
-redis_url = os.getenv("REDIS_URL")
-redis_client = None
-if redis_url:
-    try:
-        redis_client = redis.from_url(redis_url)
-        redis_client.ping()
-    except redis.ConnectionError as e:
-        print(f"Redis connection error: {e}")
 
 # Bot init
 API_TOKEN = os.getenv("API_TOKEN")
@@ -50,17 +39,9 @@ def is_integer(value):
 
 
 def translate(text, chat_id):
-    if redis_client:
-        cache_key = f"translation:{chat_id}:{text}"
-        cached = redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
-
     lang = os.getenv("BOT_LANGUAGE", "en").lower()
     try:
         translated = GoogleTranslator(source='auto', target=lang).translate(text)
-        if redis_client:
-            redis_client.setex(cache_key, timedelta(days=30), json.dumps(translated))
         return translated
     except Exception as e:
         print(f"Translation error: {e}")

@@ -28,19 +28,8 @@ DEEP_SEEK_API_KEY=tu_clave_de_deepseek
 API_TOKEN=tu_token_del_bot_de_telegram
 TELEGRAM_CHAT_ID=tu_chat_id_de_telegram
 
-# Configuración de Redis (opcional, para caché)
-REDIS_URL=redis://localhost:6379
-
 # Configuración del bot
 BOT_LANGUAGE=en  # Idioma del bot (en, es, etc.)
-APP_PORT=8000  # Puerto para la API FastAPI
-
-# Parámetros de riesgo
-RISK_PER_TRADE_PCT=1.5  # Porcentaje de riesgo por trade
-MAX_LEVERAGE_HIGH=5
-MAX_LEVERAGE_MEDIUM=4
-MAX_LEVERAGE_SMALL=3
-MICRO_BACKTEST_MIN_EXPECTANCY=0.0025
 ```
 
 ### 2. Archivo llm_prompt_template.txt
@@ -104,7 +93,6 @@ Eres un trader experimentado. Analiza los datos y proporciona una recomendación
 
 - **Error de conexión a Apolo**: Verifica tus claves API y permisos.
 - **Error de LLM**: Asegúrate de que DEEP_SEEK_API_KEY sea válida.
-- **Redis no disponible**: El bot funciona sin Redis, pero sin caché de traducciones.
 - **Archivo no encontrado**: Asegúrate de que `llm_prompt_template.txt` exista en la raíz.
 
 

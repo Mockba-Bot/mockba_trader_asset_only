@@ -122,10 +122,6 @@ services:
       - .env
     volumes:
       - ./.env:/app/.env
-    depends_on:
-      - redis-apolo-asset
-    networks:
-      - mockba-apolo-net
 
   watchtower:
     image: containrrr/watchtower
@@ -140,24 +136,6 @@ services:
       - WATCHTOWER_LABEL_ENABLE=true
     networks:
       - mockba-apolo-net
-
-  redis-apolo-asset:
-    image: redis:latest
-    container_name: redis-apolo-asset
-    restart: always
-    ports:
-      - "6394:6379"
-    volumes:
-      - redis_apolo_asset_data:/data
-    networks:
-      - mockba-apolo-net
-
-volumes:
-  redis_apolo_asset_data:
-
-networks:
-  mockba-apolo-net:
-    driver: bridge
 EOF
 
 cat > .env << EOF
@@ -169,10 +147,6 @@ DEEP_SEEK_API_KEY=$DEEP_SEEK_API_KEY
 API_TOKEN=$API_TOKEN
 TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
 BOT_LANGUAGE=$BOT_LANGUAGE
-APP_PORT=8000
-REDIS_URL=redis://redis-apolo-asset:6379/0
-CPU_COUNT=0
-MAX_WORKERS=10
 EOF
 
 

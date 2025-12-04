@@ -1,10 +1,7 @@
 import json
 import requests
 import os
-import time
 import sys
-import re
-import redis
 from pydantic import BaseModel
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -16,21 +13,6 @@ from futures_perps.trade.apolo.historical_data import get_historical_data_limit_
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
-
-# Initialize Redis connection
-redis_url = os.getenv("REDIS_URL")
-if redis_url:
-    try:
-        redis_client = redis.from_url(redis_url)
-        redis_client.ping()
-        logger.info("Connected to Redis successfully")
-    except redis.ConnectionError as e:
-        logger.warning(f"Redis not available (optional caching disabled): {e}")
-        redis_client = None
-else:
-    logger.info("Redis not configured (optional caching disabled)")
-    redis_client = None
-
 
 # Import your executor
 from trading_bot.futures_executor_apolo import place_futures_order, get_user_statistics, get_available_balance, ORDERLY_ACCOUNT_ID, ORDERLY_SECRET, ORDERLY_PUBLIC_KEY
