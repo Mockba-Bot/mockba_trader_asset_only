@@ -113,55 +113,55 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     # --- Rest of your prompt logic (unchanged) ---
     analysis_logic = get_setting("prompt_text")
 
-    entry_and_managment = (
-        f"\nAnalisys for {symbol}:\n"
-        f"Current market price: {latest_close_price}\n"
-        f"Suggested Take Profit (TP): {take_profit}% or 3× the Stop Loss distance (1:3 risk-reward ratio)\n"
-        f"Suggested Stop Loss (SL): {stop_loss}%, or a dynamic level placed just beyond the most recent swing high/low or key resistance/support zone\n"
-        f"Leverage: {leverage}x\n"
-        f"Risk Level: {risk_level}% of available balance ({balance} USDC)\n"
-        "Based on this, calculate precise entry, TP, and SL levels.\n"
+    entry_and_management = (
+        f"\nAnálisis para {symbol}:\n"
+        f"Precio de mercado actual: {latest_close_price}\n"
+        f"Take Profit sugerido (TP): {take_profit}% o 3× la distancia del Stop Loss (ratio riesgo-recompensa 1:3)\n"
+        f"Stop Loss sugerido (SL): {stop_loss}%, o un nivel dinámico colocado justo más allá del swing alto/bajo más reciente o zona clave de resistencia/soporte\n"
+        f"Apalancamiento: {leverage}x\n"
+        f"Nivel de Riesgo: {risk_level}% del saldo disponible ({balance} USDC)\n"
+        "Basado en esto, calcula niveles precisos de entrada, TP y SL.\n"
     )
 
-    # Enhanced funding context with actual data
+    # Contexto de funding mejorado con datos reales
     funding_context = (
-        "\nFUNDING RATE ANALYSIS (real data):\n"
-        f"• Current rate: {current_funding:.6f} ({current_funding*10000:.2f} bps)\n"
-        f"• Trend: {funding_trend}\n"
-        f"• Is extreme: {'YES' if funding_extreme else 'NO'}\n"
-        "Interpretation:\n"
-        "- Funding >0: Longs pay → potential bearish pressure\n"
-        "- Funding <0: Shorts pay → potential bullish pressure\n"
-        "- |Funding|>0.05%: Strong contrarian signal\n"
+        "\nANÁLISIS DE TASA DE FUNDING (datos reales):\n"
+        f"• Tasa actual: {current_funding:.6f} ({current_funding*10000:.2f} bps)\n"
+        f"• Tendencia: {funding_trend}\n"
+        f"• Es extrema: {'SÍ' if funding_extreme else 'NO'}\n"
+        "Interpretación:\n"
+        "- Funding >0: Longs pagan → presión potencial bajista\n"
+        "- Funding <0: Shorts pagan → presión potencial alcista\n"
+        "- |Funding|>0.05%: Señal contraria fuerte\n"
     )
 
-    # Enhanced liquidation context
+    # Contexto de liquidaciones mejorado
     liquidation_context = (
-        "\nLIQUIDATION CLUSTERS (real data):\n"
-        f"• Total 24h: {total_liquidations} liquidations\n"
-        f"• Near current price: {nearby_liquidations}\n"
-        "Implications:\n"
-        "- Multiple liquidations nearby: high volatility zone\n"
-        "- Smart money may hunt stops at these levels\n"
-        "- Consider placing SL outside liquidation clusters\n"
+        "\nCLUSTERS DE LIQUIDACIONES (datos reales):\n"
+        f"• Total 24h: {total_liquidations} liquidaciones\n"
+        f"• Cercanas al precio actual: {nearby_liquidations}\n"
+        "Implicaciones:\n"
+        "- Múltiples liquidaciones cercanas: zona de alta volatilidad\n"
+        "- El dinero inteligente puede cazar stops en estos niveles\n"
+        "- Considera colocar SL fuera de clusters de liquidaciones\n"
     )
 
     language = os.getenv("BOT_LANGUAGE", "en")
 
     response_format = (
-        "\nReturn ONLY a valid JSON object with the following keys:\n"
-        "- symbol: str (e.g., 'PERP_BTC_USDC')\n"
-        "- side: str ('BUY' or 'SELL')\n"
-        "- entry: float (use current market price as base)\n"
+        "\nDevuelve SOLO un objeto JSON válido con las siguientes claves:\n"
+        "- symbol: str (ej., 'PERP_BTC_USDC')\n"
+        "- side: str ('BUY' o 'SELL')\n"
+        "- entry: float (usa el precio de mercado actual como base)\n"
         "- take_profit: float\n"
         "- stop_loss: float\n"
-        "- approved: bool (true if trade is approved, false otherwise)\n"
-        "- resume_of_analysis: str (explanation why the trade is rejected or approved)\n"
-        f" - respond in the user language defined as {language}\n"
-        "\nOnly pure JSON."
+        "- approved: bool (true si el trade está aprobado, false en caso contrario)\n"
+        "- resume_of_analysis: str (explicación por qué el trade es rechazado o aprobado)\n"
+        f" - responde en el idioma del usuario definido como {language}\n"
+        "\nSolo JSON puro."
     )
 
-    prompt = analysis_logic + entry_and_managment + funding_context + liquidation_context +  response_format
+    prompt = analysis_logic + entry_and_management + funding_context + liquidation_context +  response_format
 
     # Debug the prompt
     logger.debug(f"LLM Prompt:\n{prompt}\n--- End of Prompt ---")
@@ -264,6 +264,18 @@ def process_signal():
         # --- Format response ---
         if isinstance(llm_result, dict) and llm_result.get("approved"):
             try:
+                # the signal was approved, if the auto_trade setting is true, place the order
+                # and create the dict required to place the order, the values are
+                # symbol, side, take_profit, stop_loss, leverage
+                if get_setting("auto_trade") == "true":
+                    signal_dict = {
+                        "symbol": llm_result['symbol'],
+                        "side": llm_result['side'],
+                        "take_profit": float(llm_result['take_profit']),
+                        "stop_loss": float(llm_result['stop_loss']),
+                        "leverage": leverage
+                    }
+                    place_futures_order(signal_dict)  
                 return (
                     f"✅ TRADE APPROVED\n"
                     f"• Symbol: {llm_result['symbol']}\n"
@@ -273,8 +285,9 @@ def process_signal():
                     f"• SL: {float(llm_result['stop_loss']):.6f}\n"
                     f"• Reason: {llm_result.get('resume_of_analysis', 'N/A')}"
                 )
+
             except (KeyError, ValueError, TypeError) as e:
-                return f"⚠️ Trade approved but malformed output: {str(e)}"
+                return f"⚠️ Trade approved but malformed output: {str(e)}"            
         else:
             reason = "Unknown"
             if isinstance(llm_result, dict):

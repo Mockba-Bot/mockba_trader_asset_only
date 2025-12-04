@@ -13,6 +13,7 @@ from trading_bot.send_bot_message import send_bot_message
 from base58 import b58decode
 from base64 import urlsafe_b64encode
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from db.db_ops import get_setting
 
 
 from logs.log_config import apolo_trader_logger as logger
@@ -24,7 +25,6 @@ BASE_URL = os.getenv("ORDERLY_BASE_URL")
 ORDERLY_ACCOUNT_ID = os.getenv("ORDERLY_ACCOUNT_ID")
 ORDERLY_SECRET = os.getenv("ORDERLY_SECRET")
 ORDERLY_PUBLIC_KEY = os.getenv("ORDERLY_PUBLIC_KEY")
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", 10))
 DEEP_SEEK_API_KEY = os.getenv("DEEP_SEEK_API_KEY")
 WSS_BASE = "wss://ws-private-evm.orderly.org/v2/ws/private/stream"
 
@@ -58,7 +58,7 @@ class RateLimiter:
             self.calls.append(time.time())
 
 # Risk parameters - SAFER VALUES
-RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "0.3"))  # Reduced to 0.3%
+RISK_PER_TRADE_PCT = get_setting('risk_level')
 
 # Helpers
 def round_down_to_tick(value: float, tick: float) -> float:
