@@ -47,7 +47,7 @@ def initialize_database_tables():
             ('interval', '1h'),
             ('min_tp', '1.0'),
             ('min_sl', '1.0'),
-            ('auto_trade', 'true'),
+            ('auto_trade', 'True'),
             ('indicator', 'Hybrid'),
             ('leverage', '5'), 
             ('prompt_text', 'standard')
@@ -59,6 +59,7 @@ def initialize_database_tables():
             """, (key, value))
         
         conn.commit()
+        
         logger.info("✅ SQLite tables initialized.")
 
 

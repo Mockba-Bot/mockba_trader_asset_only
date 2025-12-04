@@ -57,9 +57,6 @@ class RateLimiter:
                 time.sleep(sleep_time)
             self.calls.append(time.time())
 
-# Risk parameters - SAFER VALUES
-RISK_PER_TRADE_PCT = get_setting('risk_level')
-
 # Helpers
 def round_down_to_tick(value: float, tick: float) -> float:
     return float((Decimal(value) // Decimal(str(tick))) * Decimal(str(tick)))
@@ -220,7 +217,7 @@ def calculate_position_size_with_margin_cap(
     signal: dict,
     available_balance: float,
     leverage: int,
-    asset_info: dict  # renamed from symbol_info for clarity
+    asset_info: dict
 ) -> float:
     """
     Calculate position size with margin cap using asset_info fields:
@@ -230,7 +227,13 @@ def calculate_position_size_with_margin_cap(
     """
     entry = float(signal['entry'])
     sl = float(signal['stop_loss'])
-    # side = signal['side'].upper()
+
+    # Fetch and validate risk level dynamically
+    try:
+        risk_pct = float(get_setting('risk_level'))
+    except (TypeError, ValueError, AttributeError):
+        logger.warning("Invalid or missing 'risk_level' setting. Using default 1%.")
+        risk_pct = 1.0
 
     # Validate leverage against asset's IMR
     max_allowed_leverage = int(1 / asset_info['base_imr']) if asset_info['base_imr'] > 0 else 1
@@ -238,7 +241,7 @@ def calculate_position_size_with_margin_cap(
         logger.warning(f"Leverage {leverage}x exceeds max allowed {max_allowed_leverage}x. Capping.")
         leverage = max_allowed_leverage
 
-    risk_amount = available_balance * (RISK_PER_TRADE_PCT / 100)
+    risk_amount = available_balance * (risk_pct / 100)
     risk_per_unit = abs(entry - sl)
 
     if risk_per_unit <= 0:
@@ -278,7 +281,6 @@ def calculate_position_size_with_margin_cap(
     # Optional: enforce max notional (quote_max)
     if notional > asset_info['quote_max']:
         logger.warning(f"Notional ${notional:.2f} exceeds max ${asset_info['quote_max']}")
-        # Optionally cap or reject
         return 0.0
 
     return qty
@@ -289,6 +291,8 @@ def place_futures_order(signal: dict):
     Creates and submits a BRACKET order with TAKE_PROFIT and STOP_LOSS child orders.
     """
     rate_limiter()  # ✅ global rate limit
+
+    logger.info("Placing order with signal_dict: %s", signal)
 
     symbol = signal['symbol']
     side = signal['side'].upper()

@@ -164,7 +164,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     prompt = analysis_logic + entry_and_management + funding_context + liquidation_context +  response_format
 
     # Debug the prompt
-    logger.debug(f"LLM Prompt:\n{prompt}\n--- End of Prompt ---")
+    # logger.debug(f"LLM Prompt:\n{prompt}\n--- End of Prompt ---")
 
     # --- Send to DeepSeek ---
     response = requests.post(
@@ -195,7 +195,12 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             return {
                 "approved": True,
                 "analysis": content,
-                **result
+                "symbol": result.get('symbol', signal_dict['asset']),
+                "side": result.get('side', 'BUY'),
+                "entry": result.get('entry', latest_close_price),
+                "take_profit": result.get('take_profit', latest_close_price * 1.01),
+                "stop_loss": result.get('stop_loss', latest_close_price * 0.99),
+                "resume_of_analysis": result.get('resume_of_analysis', 'Analysis not provided'),
             }
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"Failed to parse LLM JSON response: {e}")
@@ -267,10 +272,11 @@ def process_signal():
                 # the signal was approved, if the auto_trade setting is true, place the order
                 # and create the dict required to place the order, the values are
                 # symbol, side, take_profit, stop_loss, leverage
-                if get_setting("auto_trade") == "true":
+                if get_setting("auto_trade") == "True":
                     signal_dict = {
                         "symbol": llm_result['symbol'],
                         "side": llm_result['side'],
+                        "entry": float(llm_result['entry']),   
                         "take_profit": float(llm_result['take_profit']),
                         "stop_loss": float(llm_result['stop_loss']),
                         "leverage": leverage
