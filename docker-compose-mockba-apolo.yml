@@ -1,24 +1,20 @@
 services:
-  micro-mockba-apolo-futures-bot:
-    image: andresdom2004/micro-mockba-apolo-futures-bot:latest
-    container_name: micro-mockba-apolo-futures-bot
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+  micro-mockba-asset-futures-bot:
+    image: andresdom2004/micro-mockba-asset-futures-bot:latest
+    container_name: micro-mockba-asset-futures-bot
     restart: always
     env_file:
       - .env
     volumes:
       - ./.env:/app/.env
-      - ./llm_prompt_template.txt:/app/futures_perps/trade/apolo/llm_prompt_template.txt
     depends_on:
-      - redis-apolo
+      - redis-apolo-asset
     networks:
       - mockba-apolo-net
 
   watchtower:
     image: containrrr/watchtower
-    container_name: watchtower-apolo
+    container_name: watchtower-apolo-asset
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -30,19 +26,19 @@ services:
     networks:
       - mockba-apolo-net
 
-  redis-apolo:
+  redis-apolo-asset:
     image: redis:latest
-    container_name: redis-mockba-apolo
+    container_name: redis-apolo-asset
     restart: always
     ports:
-      - "6393:6379"
+      - "6394:6379"
     volumes:
-      - redis_apolo_data:/data
+      - redis_apolo_asset_data:/data
     networks:
       - mockba-apolo-net
 
 volumes:
-  redis_apolo_data:
+  redis_apolo_asset_data:
 
 networks:
   mockba-apolo-net:

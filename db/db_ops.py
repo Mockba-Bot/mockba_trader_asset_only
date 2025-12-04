@@ -2,7 +2,6 @@
 
 import os
 import sqlite3
-import sys
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -22,16 +21,6 @@ def get_db_connection():
 def initialize_database_tables():
     with get_db_connection() as conn:
         cur = conn.cursor()
-
-        # bot_control table (unchanged)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS bot_control (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                is_running BOOLEAN DEFAULT 1,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cur.execute("INSERT OR IGNORE INTO bot_control (id, is_running) VALUES (1, 1);")
 
         # create table settings
         cur.execute("""
@@ -59,7 +48,8 @@ def initialize_database_tables():
             ('min_sl', '1.0'),
             ('auto_trade', 'true'),
             ('indicator', 'Hybrid'),
-            ('leverage', '5')
+            ('leverage', '5'), 
+            ('prompt_text', 'standard')
         ]
         for key, value in default_settings:
             cur.execute("""

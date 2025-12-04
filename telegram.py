@@ -8,144 +8,106 @@ from deep_translator import GoogleTranslator
 import telebot
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from db.db_ops import get_bot_status, startStopBotOp, upsert_setting, get_setting, get_all_settings
+from db.db_ops import get_bot_status, startStopBotOp, upsert_setting, get_all_settings, initialize_database_tables, get_setting
+from futures_perps.trade.apolo.main import process_signal as run_process_signal  # Rename to avoid conflict
 import json
 from datetime import timedelta
 import redis
 
-# Load environment variables from the .env file
+# Load environment variables
 load_dotenv()
+initialize_database_tables()
 
-
-# Initialize Redis connection
+# Redis
 redis_url = os.getenv("REDIS_URL")
+redis_client = None
 if redis_url:
     try:
         redis_client = redis.from_url(redis_url)
         redis_client.ping()
     except redis.ConnectionError as e:
         print(f"Redis connection error: {e}")
-        redis_client = None
-else:
-    redis_client = None
 
+# Bot init
 API_TOKEN = os.getenv("API_TOKEN")
 bot = telebot.TeleBot(API_TOKEN)
-gnext = ""
-gdata = ""
-gp1 = ""
+gp1 = ""  # global setting key
 
-# translation function using GoogleTranslator
+
+def is_float(value):
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
+
+def is_integer(value):
+    try:
+        int(value)
+        return True
+    except ValueError:
+        return False
+
+
 def translate(text, chat_id):
-    # Try to get cached translation from Redis
     if redis_client:
         cache_key = f"translation:{chat_id}:{text}"
         cached = redis_client.get(cache_key)
         if cached:
             return json.loads(cached)
 
-    # Get language from database
     lang = os.getenv("BOT_LANGUAGE", "en").lower()
-
-    # print(f"Translating to {lang} for user {chat_id}")
-
     try:
-        translated_text = GoogleTranslator(source='auto', target=lang).translate(text)
-        # Cache the translation for 30 days
+        translated = GoogleTranslator(source='auto', target=lang).translate(text)
         if redis_client:
-            redis_client.setex(
-                cache_key,
-                timedelta(days=30),
-                json.dumps(translated_text)
-            )
-        return translated_text
+            redis_client.setex(cache_key, timedelta(days=30), json.dumps(translated))
+        return translated
     except Exception as e:
         print(f"Translation error: {e}")
-        return text  # Fallback to original text
+        return text
 
 
-# only used for console output now
-def listener(messages):
-   """
-   When new messages arrive TeleBot will call this function.
-   """
-   for m in messages:
-       if m.content_type == 'text':
-           # print the sent message to the console
-           print(str(m.chat.first_name) + " [" + str(m.chat.id) + "]: " + m.text)
+# === Message Handlers ===
 
-   bot.set_update_listener(listener)  # register listener     
-
-
-# Comando inicio
 @bot.message_handler(commands=['start'])
 def command_start(m):
-    if m.chat.type != 'private':
-        return
+    if m.chat.type != 'private': return
     cid = m.chat.id
     nom = m.chat.first_name
     text = translate("Welcome to Mockba! With this bot, you trade against Apolo Dex.", cid)
-    welcome_text = f"{text}."
-    bot.send_message(cid,
-                    welcome_text + str(nom) + " - " + str(cid))
-    command_list(m) 
+    bot.send_message(cid, f"{text}. {nom} - {cid}")
+    command_list(m)
 
 
 @bot.message_handler(commands=['list'])
 def command_list(m):
-    if m.chat.type != 'private':
-        return
+    if m.chat.type != 'private': return
     cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid):
+        bot.send_message(cid, translate("🔍 Not authorized", cid))
+        return
 
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
-    
-    help_text = translate("Available options.", cid)
-    message_button1 = translate("▶️ ⏹️  Start/Stop Bot", cid)
-    message_button2 = translate("⚙️ Settings", cid) # Setting button not implemented yet
-    message_button3 = translate("📝  List Bot", cid)
-    # Define the buttons
-    button1 = InlineKeyboardButton(message_button1, callback_data="SetBotStatus")
-    button2 = InlineKeyboardButton(message_button2, callback_data="Settings")
-    button3 = InlineKeyboardButton(message_button3, callback_data="ListBotStatus")
-    # Create a nested list of buttons
-    buttons = [[button1], [button2], [button3]]
-    # Order the buttons in the second row
-    buttons[1].sort(key=lambda btn: btn.text)
+    buttons = [
+        [InlineKeyboardButton(translate("⚙️ Settings", cid), callback_data="Settings")],
+        [InlineKeyboardButton(translate("📡  Process Signal", cid), callback_data="ProcessSignal")],
+        [InlineKeyboardButton(translate("📝  List Bot", cid), callback_data="ListBotStatus")],
+        [InlineKeyboardButton(translate("📋  List All Settings", cid), callback_data="ListSettings")]
+    ]
+    bot.send_message(cid, translate("Available options.", cid), reply_markup=InlineKeyboardMarkup(buttons))
 
-    # Create the keyboard markup
-    reply_markup = InlineKeyboardMarkup(buttons)             
-    bot.send_message(cid, help_text, reply_markup=reply_markup)  
 
-# Callback_Handler
-# This code creates a dictionary called options that maps the call.data to the corresponding function. 
-# The get() method is used to retrieve the function based on the call.data. If the function exists
-# , it is called passing the call.message as argument. 
-# This approach avoids the need to use if statements to check the value of call.data for each possible option.
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
-    if call.message.chat.type != 'private':
-        return
+    if call.message.chat.type != 'private': return
     cid = call.message.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid):
+        bot.send_message(cid, translate("🔍 Not authorized", cid))
+        return
 
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
-    
-    # Define the mapping between call.data and functions
     options = {
         'List': command_list,
-        'SetBotStatus': SetBotStatus,
         'ListBotStatus': listBotStatus,
         'Settings': settings,
-        # Add options from settings def
         'set_asset': set_asset,
         'set_risk': set_risk,
         'set_interval': set_interval,
@@ -153,224 +115,229 @@ def callback_handler(call):
         'set_min_sl': set_min_sl,
         'set_auto_trade': set_auto_trade,
         'set_indicator': set_indicator,
-        'set_leverage': set_leverage
+        'set_leverage': set_leverage,
+        'set_prompt': set_prompt,
+        'ListSettings': ListSettings,
+        'ProcessSignal': process_signal
     }
-    # Get the function based on the call.data
     func = options.get(call.data)
-
-    # Call the function if it exists
     if func:
-        func(call.message) 
+        func(call.message)
 
 
-def listMenu(m):
-    if m.chat.type != 'private':
-        return
-    cid = m.chat.id
-    help_text = translate("Available options.", cid)
-
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
-    
-    # Define the buttons
-    button1 = InlineKeyboardButton(translate("📋  List Bot Status", cid), callback_data="ListBotStatus")
-    button2 = InlineKeyboardButton(translate("<< Back to list", cid), callback_data="List")
-
-    # Create a nested list of buttons
-    buttons = [[button1], [button2]]
-    buttons[1].sort(key=lambda btn: btn.text)
-
-    # Create the keyboard markup
-    reply_markup = InlineKeyboardMarkup(buttons)    
-    bot.send_message(cid, help_text, reply_markup=reply_markup)  
-
+# === Helper UI Functions ===
 
 def listBotStatus(m):
-    if m.chat.type != 'private':
-        return
+    if m.chat.type != 'private': return
     cid = m.chat.id
-    markup = types.ReplyKeyboardMarkup()
-    itemd = types.KeyboardButton('/list')
-    markup.row(itemd)
-    global gpair
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
 
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
+    markup = types.ReplyKeyboardMarkup(row_width=1)
+    markup.add(types.KeyboardButton('/list'))
 
-    bot.send_message(cid, translate("Listing ...", cid), parse_mode='Markdown')
-
+    bot.send_message(cid, translate("Listing ...", cid))
     status = get_bot_status()
     signal_status = translate('🔴  OFF - NOT TRADING', cid) if status == 0 else translate('🟢  ON - TRADING', cid)
-    bot.send_message(cid, signal_status, parse_mode='Markdown')
-    bot.send_message(cid, translate('Done', cid), parse_mode='Markdown', reply_markup=markup)
+    bot.send_message(cid, signal_status)
+    bot.send_message(cid, translate('Done', cid), reply_markup=markup)
 
-
-def SetBotStatus(m):
-    if m.chat.type != 'private':
-        return
-    #get env
-    cid = m.chat.id
-    global gnext
-    gframe = m.text
-    markup = types.ReplyKeyboardMarkup()
-    itema = types.KeyboardButton('Start')
-    itemb = types.KeyboardButton('Stop')
-    itemd = types.KeyboardButton('CANCEL')
-    markup.row(itema)
-    markup.row(itemb)
-    markup.row(itemd)
-
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
-
-    if gframe == 'CANCEL':
-       markup = types.ReplyKeyboardMarkup()
-       item = types.KeyboardButton('/list')
-       markup.row(item)
-       text = translate("🔽 Select your option", cid)
-       bot.send_message(cid, text, parse_mode='Markdown', reply_markup=markup)
-    else:
-        bot.send_message(cid, translate('🤖 This operation will stop or start your bot.', cid), parse_mode='Markdown', reply_markup=markup)
-        bot.register_next_step_handler_by_chat_id(cid, startStopBot)
-
-def startStopBot(m):
-    if m.chat.type != 'private':
-        return
-    cid = m.chat.id
-    valor = m.text
-    global gdata, gpair, gframe, gp1
-    gp1 = valor
-    markup = types.ReplyKeyboardMarkup()
-    itemd = types.KeyboardButton('/list')
-    markup.row(itemd)
-
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
-    
-    if valor != 'Start' and valor != 'Stop':
-        markup = types.ReplyKeyboardMarkup()
-        item = types.KeyboardButton('/list')
-        markup.row(item)
-        bot.send_message(cid, translate("Invalid option", cid), parse_mode='Markdown', reply_markup=markup)
-        return
-    else:
-        gdata = 1 if valor == 'Start' else 0
-        if valor == 'CANCEL':
-            markup = types.ReplyKeyboardMarkup()
-            item = types.KeyboardButton('/list')
-            markup.row(item)
-            bot.send_message(cid, translate('🔽 Select your option', cid), parse_mode='Markdown', reply_markup=markup)
-        else:
-            bot.send_message(cid, translate("Processing...", cid), parse_mode='Markdown')
-            startStopBotOp(gdata)
-            bot.send_message(cid, translate(f"Operation to {valor} bot executed...", cid), parse_mode='Markdown', reply_markup=markup)
 
 def settings(m):
-    if m.chat.type != 'private':
-        return
+    if m.chat.type != 'private': return
     cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
 
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
-    
-    # Add butons for each setting
-    set_asset = translate("Set Asset", cid)
-    set_risk = translate("Set Risk Level", cid)
-    set_interval = translate("Set Interval", cid)
-    set_min_tp = translate("Set Min Take Profit", cid)
-    set_min_sl = translate("Set Min Stop Loss", cid)
-    set_auto_trade = translate("Set Auto Trade", cid)
-    set_indicator = translate("Set Indicator", cid)
-    set_leverage = translate("Set Leverage", cid)
-    # Define the buttons
-    button1 = InlineKeyboardButton(set_asset, callback_data="set_asset")
-    button2 = InlineKeyboardButton(set_risk, callback_data="set_risk")
-    button3 = InlineKeyboardButton(set_interval, callback_data="set_interval")
-    button4 = InlineKeyboardButton(set_min_tp, callback_data="set_min_tp")
-    button5 = InlineKeyboardButton(set_min_sl, callback_data="set_min_sl")
-    button6 = InlineKeyboardButton(set_auto_trade, callback_data="set_auto_trade")
-    button7 = InlineKeyboardButton(set_indicator, callback_data="set_indicator")
-    button8 = InlineKeyboardButton(set_leverage, callback_data="set_leverage")
-    # Create a nested list of buttons
-    buttons = [[button1], [button2], [button3], [button4], [button5], [button6], [button7], [button8]]
-    # Order the buttons in the second row
-    buttons[1].sort(key=lambda btn: btn.text)
+    labels = {
+        "set_asset": "💰 Asset",
+        "set_risk": "⚠️ Risk Level",
+        "set_interval": "⏱️ Interval",
+        "set_min_tp": "📈 Min Take Profit",
+        "set_min_sl": "📉 Min Stop Loss",
+        "set_auto_trade": "🤖 Auto Trade",
+        "set_indicator": "📊 Indicator",
+        "set_leverage": "⚖️ Leverage",
+        "set_prompt": "💬 Prompt Text"
+    }
+    buttons = [[InlineKeyboardButton(translate(v, cid), callback_data=k)] for k, v in labels.items()]
+    bot.send_message(cid, translate("Available options.", cid), reply_markup=InlineKeyboardMarkup(buttons))
+    bot.send_message(cid, translate("Settings option is under development.", cid))
 
-    # Create the keyboard markup
-    reply_markup = InlineKeyboardMarkup(buttons)             
-    bot.send_message(cid, help_text, reply_markup=reply_markup)  
-    
-    help_text = translate("Settings option is under development.", cid)
-    bot.send_message(cid, help_text, parse_mode='Markdown')
 
-# Def for setting handlers
-def set_asset(m):
-    if m.chat.type != 'private':
-        return
-    cid = m.chat.id
+# === Validation & Input Handling ===
 
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return
-    
-    bot.send_message(cid, translate("Set Asset option selected. Example PERP_BTC_USDC.", cid), parse_mode='Markdown')
-    bot.register_next_step_handler_by_chat_id(cid, upsert_assets)
-
-#Def to perform the set from the value
 def upsert_assets(m):
-    if m.chat.type != 'private':
-        return
+    if m.chat.type != 'private': return
     cid = m.chat.id
+    valor = m.text.strip()
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
 
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    # comparech chat_id with cid to ensure only authorized user can access
-    if str(chat_id) != str(cid):
-       text = translate("🔍 Not authorized", cid)
-       bot.send_message(cid, text, parse_mode='Markdown')
-       return    
+    markup = types.ReplyKeyboardMarkup(row_width=1)
+    markup.add(types.KeyboardButton('/list'))
+
+    if valor.upper() == "CANCEL":
+        bot.send_message(cid, translate("Operation cancelled.", cid), reply_markup=markup)
+        return
+
+    global gp1
+    valid, error_msg = True, ""
+
+    if gp1 == "asset":
+        if not re.match(r"^PERP_[A-Z0-9]+_USDC$", valor):
+            valid, error_msg = False, "Invalid asset format. Use: PERP_BTC_USDC"
+    elif gp1 == "risk_level":
+        if not is_float(valor) or float(valor) <= 0:
+            valid, error_msg = False, "Risk must be a positive number (e.g., 1.5)"
+    elif gp1 in ("min_tp", "min_sl"):
+        if not is_float(valor) or float(valor) <= 0:
+            valid, error_msg = False, f"Min {'TP' if 'tp' in gp1 else 'SL'} must be positive"
+    elif gp1 == "leverage":
+        if not is_integer(valor) or not (1 <= int(valor) <= 50):
+            valid, error_msg = False, "Leverage must be integer 1–50"
+    elif gp1 == "auto_trade":
+        if valor not in ("True", "False"):
+            valid, error_msg = False, "Auto Trade must be 'True' or 'False'"
+    elif gp1 == "interval":
+        if not re.match(r"^\d+[mhd]$", valor.lower()):
+            valid, error_msg = False, "Invalid interval (e.g., 15m, 1h)"
+    # prompt_text: no validation
+
+    if not valid:
+        bot.send_message(cid, translate(f"❌ {error_msg}. Try again:", cid), reply_markup=markup)
+        bot.register_next_step_handler_by_chat_id(cid, upsert_assets)
+        return
+
+    upsert_setting(gp1, valor)
+    bot.send_message(cid, translate(f"✅ {gp1} set to {valor}.", cid), reply_markup=markup)  # ← NO Markdown!
+
+
+# === Setting Entry Points ===
+
+def set_asset(m):
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "asset"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter asset in format: PERP_BTC_USDC", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
 def set_risk(m):
-    pass
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "risk_level"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter risk level (e.g., 1.5 for 1.5%)", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
 def set_interval(m):
-    pass
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "interval"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter interval (e.g., 15m, 1h, 4h)", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
 def set_min_tp(m):
-    pass
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "min_tp"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter min TP % (e.g., 1.0)", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
 def set_min_sl(m):
-    pass
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "min_sl"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter min SL % (e.g., 1.0)", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
 def set_auto_trade(m):
-    pass
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "auto_trade"
+    cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
+    markup = types.ReplyKeyboardMarkup(row_width=2)
+    markup.add("True", "False", "CANCEL")
+    bot.send_message(cid, translate("Select Auto Trade:", cid), reply_markup=markup)
+    bot.register_next_step_handler_by_chat_id(cid, upsert_assets)
 
 def set_indicator(m):
-    pass
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "indicator"  # ⚠️ FIXED: was "auto_trade" before!
+    cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
+    markup = types.ReplyKeyboardMarkup(row_width=1)
+    for opt in ['Trend-Following', 'Volatility Breakout', 'Momentum Reversal', 'Momentum + Volatility', 'Hybrid', 'Advanced', 'Router', 'CANCEL']:
+        markup.add(opt)
+    bot.send_message(cid, translate("Select Indicator:", cid), reply_markup=markup)
+    bot.register_next_step_handler_by_chat_id(cid, upsert_assets)
 
 def set_leverage(m):
-    pass
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "leverage"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter leverage (e.g., 5)", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
-bot.polling()
+def set_prompt(m):
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "prompt_text"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter prompt text:", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
+
+
+# === Main Actions ===
+
+def process_signal(m):
+    if m.chat.type != 'private': return
+    cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
+
+    bot.send_message(cid, translate("Processing signal with LLM...", cid))
+    try:
+        result = run_process_signal()  # renamed import
+    except Exception as e:
+        result = f"Error: {str(e)}"
+
+    # ⚠️ DO NOT USE MARKDOWN HERE — result may contain *, _, etc.
+    bot.send_message(cid, translate(f"Signal processed. Result: {result}", cid))
+
+    auto_trade = get_setting("auto_trade")
+    time.sleep(3)
+    if auto_trade and auto_trade.lower() == 'false':
+        bot.send_message(cid, translate("Auto Trade is disabled. Please execute the trade manually.", cid))
+    # if is approved and auto_trade is true, send the message (handled in run_process_signal)
+    if auto_trade and auto_trade.lower() == 'true':
+        bot.send_message(cid, translate("Auto Trade is enabled. Trade execution handled by the signal processor.", cid))    
+
+
+def ListSettings(m):
+    if m.chat.type != 'private':
+        return
+    cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid):
+        return
+
+    settings = get_all_settings()
+    if not settings:
+        bot.send_message(cid, translate("No settings found.", cid))
+        return
+
+    lines = ["🔹 <b>Current Bot Settings</b>"]
+    for key, value in sorted(settings.items()):
+        # Format key in title case (optional)
+        display_key = key.replace("_", " ").title()
+        lines.append(f"▸ {display_key}: <code>{value}</code>")
+
+    # Join with newlines
+    settings_text = "\n".join(lines)
+
+    # Use HTML mode for safe formatting (bold + code blocks)
+    try:
+        bot.send_message(cid, settings_text, parse_mode='HTML')
+    except Exception:
+        # Fallback to plain text if HTML fails
+        plain_text = "Current Settings:\n" + "\n".join(f"{k}: {v}" for k, v in sorted(settings.items()))
+        bot.send_message(cid, plain_text, cid)
+
+
+# Start polling
+if __name__ == "__main__":
+    bot.polling()

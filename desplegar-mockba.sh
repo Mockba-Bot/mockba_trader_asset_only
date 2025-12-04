@@ -65,7 +65,7 @@ pedir_opcional() {
 
 # === Main Flow ===
 
-DIRECTORIO_PROYECTO="/opt/mockba-apolo-trader"
+DIRECTORIO_PROYECTO="/opt/mockba-apolo-asset"
 imprimir_estado "Creando directorio del proyecto: $DIRECTORIO_PROYECTO"
 mkdir -p "$DIRECTORIO_PROYECTO"
 cd "$DIRECTORIO_PROYECTO" || { imprimir_error "No se pudo acceder a $DIRECTORIO_PROYECTO"; exit 1; }
@@ -108,44 +108,28 @@ echo
 imprimir_info "🌐 Configuración del Bot - Paso 3: Idioma"
 pedir_obligatorio "Idioma (es/en)" BOT_LANGUAGE
 
-echo
-imprimir_info "⚙️ Configuración del Bot - Paso 4: Parámetros de Trading"
-pedir_obligatorio "📊 Riesgo por trade (%) (Ejemplo 1.5)" RISK_PER_TRADE_PCT
-pedir_obligatorio "🎚️ Apalancamiento alto (Ejemplo 10)" MAX_LEVERAGE_HIGH
-pedir_obligatorio "🎚️ Apalancamiento medio (Ejemplo 5)" MAX_LEVERAGE_MEDIUM
-pedir_obligatorio "🎚️ Apalancamiento bajo (Ejemplo 3)" MAX_LEVERAGE_SMALL
-pedir_obligatorio "📈 Expectativa mínima backtest (Ejemplo 0.0040)" MICRO_BACKTEST_MIN_EXPECTANCY
-pedir_obligatorio "🔢 Máximo trades concurrentes (Ejemplo 5)" MAX_CONCURRENT_TRADES
-
-echo
-imprimir_info "📝 Configuración del Bot - Paso 5: Prompt de IA"
-pedir_obligatorio "✏️ Prompt personalizado (Ejemplo: 'Eres un experto en trading...')" PROMPT_PERSONALIZADO
 
 # === Guardar archivos ===
 imprimir_estado "Creando archivos de configuración..."
 
 cat > docker-compose.yml << EOF
 services:
-  micro-mockba-apolo-futures-bot:
-    image: andresdom2004/micro-mockba-apolo-futures-bot:latest
-    container_name: micro-mockba-apolo-futures-bot
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+  micro-mockba-asset-futures-bot:
+    image: andresdom2004/micro-mockba-asset-futures-bot:latest
+    container_name: micro-mockba-asset-futures-bot
     restart: always
     env_file:
       - .env
     volumes:
       - ./.env:/app/.env
-      - ./llm_prompt_template.txt:/app/futures_perps/trade/apolo/llm_prompt_template.txt
     depends_on:
-      - redis-apolo
+      - redis-apolo-asset
     networks:
       - mockba-apolo-net
 
   watchtower:
     image: containrrr/watchtower
-    container_name: watchtower-apolo
+    container_name: watchtower-apolo-asset
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -157,23 +141,23 @@ services:
     networks:
       - mockba-apolo-net
 
-  redis-apolo:
+  redis-apolo-asset:
     image: redis:latest
-    container_name: redis-mockba-apolo
+    container_name: redis-apolo-asset
     restart: always
     ports:
-      - "6393:6379"
+      - "6394:6379"
     volumes:
-      - redis_apolo_data:/data
+      - redis_apolo_asset_data:/data
     networks:
       - mockba-apolo-net
 
 volumes:
-  redis_apolo_data:
+  redis_apolo_asset_data:
 
 networks:
   mockba-apolo-net:
-    driver: bridge    
+    driver: bridge
 EOF
 
 cat > .env << EOF
@@ -186,30 +170,14 @@ API_TOKEN=$API_TOKEN
 TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
 BOT_LANGUAGE=$BOT_LANGUAGE
 APP_PORT=8000
-REDIS_URL=redis://redis-apolo:6379/0
+REDIS_URL=redis://redis-apolo-asset:6379/0
 CPU_COUNT=0
 MAX_WORKERS=10
-MAX_CONCURRENT_TRADES=$MAX_CONCURRENT_TRADES
-RISK_PER_TRADE_PCT=$RISK_PER_TRADE_PCT
-MAX_LEVERAGE_HIGH=$MAX_LEVERAGE_HIGH
-MAX_LEVERAGE_MEDIUM=$MAX_LEVERAGE_MEDIUM
-MAX_LEVERAGE_SMALL=$MAX_LEVERAGE_SMALL
-MICRO_BACKTEST_MIN_EXPECTANCY=$MICRO_BACKTEST_MIN_EXPECTANCY
 EOF
 
-echo "$PROMPT_PERSONALIZADO" > prompt.txt
 
-imprimir_estado "Archivos creados: .env, docker-compose.yml, prompt.txt"
+imprimir_estado "Archivos creados: .env, docker-compose.yml"
 
-# === Iniciar ===
-imprimir_info "🚀 ¿Deseas iniciar el bot ahora?"
-read -p "Escribe 's' para iniciar, cualquier otra tecla para salir sin iniciar: " iniciar
-if [[ ! "$iniciar" =~ ^[Ss]$ ]]; then
-    imprimir_info "Instalación completada. Puedes iniciar manualmente con: docker-compose up -d"
-    exit 0
-fi
-
-imprimir_estado "Iniciando el bot..."
 
 if command -v docker-compose &> /dev/null; then
     DOCKER_CMD="docker-compose"
@@ -224,10 +192,7 @@ if [ $? -eq 0 ]; then
     imprimir_estado "✅ ¡Bot iniciado correctamente!"
     echo
     echo "📝 Editar configuración:   nano $DIRECTORIO_PROYECTO/.env"
-    echo "✏️  Editar prompt:        nano $DIRECTORIO_PROYECTO/prompt.txt"
     echo "📊 Ver logs:              $DOCKER_CMD logs -f"
-    echo "🛑 Detener bot:           $DOCKER_CMD down"
-    echo "▶️  Iniciar bot:          $DOCKER_CMD up -d"
     echo
     imprimir_estado "¡Despliegue completado! 🎉"
 else

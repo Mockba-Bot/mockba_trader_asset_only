@@ -6,10 +6,7 @@ from datetime import datetime
 
 # List of scripts to run (relative to project root)
 scripts = [
-    # apolo futures perp scalping bot
-    "futures_perps/trade/apolo/main.py",
-    # Telegram bot for user interaction
-    "telegram.py",
+    "telegram.py"
 ]
 
 def log(msg):

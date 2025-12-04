@@ -9,9 +9,9 @@ from pydantic import BaseModel
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from db.db_ops import  initialize_database_tables, get_bot_status, get_setting
+from db.db_ops import  get_setting, get_setting
 from logs.log_config import apolo_trader_logger as logger
-from historical_data import get_historical_data_limit_apolo, get_orderbook, get_funding_rate_history, get_public_liquidations
+from futures_perps.trade.apolo.historical_data import get_historical_data_limit_apolo, get_orderbook, get_funding_rate_history, get_public_liquidations
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -38,16 +38,8 @@ from trading_bot.futures_executor_apolo import place_futures_order, get_user_sta
 from trading_bot.send_bot_message import send_bot_message
 
 # Import your liquidity persistence monitor
-import liquidity_persistence_monitor as lpm
+from futures_perps.trade.apolo import liquidity_persistence_monitor as lpm
 
-
-def load_prompt_template():
-    """Load LLM prompt from file"""
-    try:
-        with open("futures_perps/trade/apolo/llm_prompt_template.txt", "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        raise FileNotFoundError("llm_prompt_template.txt not found. Please create the prompt file.")
 
 # Helper: Format orderbook as text (not CSV!)
 def format_orderbook_as_text(ob: dict) -> str:
@@ -61,12 +53,6 @@ def format_orderbook_as_text(ob: dict) -> str:
     
     return "\n".join(lines)
 
-def get_active_apolo_positions_count() -> int:
-    """Get count of non-zero positions from Apolo Dex"""
-    active_count = get_user_statistics()
-    
-    return active_count
-
 
 def analyze_with_llm(signal_dict: dict) -> dict:
     """Send to LLM for detailed analysis using fixed prompt structure."""
@@ -76,7 +62,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         symbol=signal_dict['asset'],
         interval=signal_dict['interval'],
         limit=500,
-        strategy=signal_dict.get('strategy')
+        strategy=signal_dict.get('indicator')
     )
     csv_content = df.to_csv(index=False)  # ← Preserves all columns automatically
     # get the latest close price from the dataframe
@@ -136,68 +122,64 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         total_liquidations = 0
         nearby_liquidations = 0
 
-    # --- Rest of your prompt logic (unchanged) ---
-    intro = (
-        "Eres un trader discrecional de elite en futuros de cripto con más de 10 años de experiencia.  \n"
-        "Tu trabajo es **validar o rechazar** la señal dada usando SOLO los datos proporcionados. .\n"
-        "Analiza el CSV adjunto (80 velas) y el libro de órdenes para la señal dada.\n\n"
-    )
-            
+    symbol = signal_dict['asset']
+    take_profit = signal_dict['min_tp']
+    stop_loss = signal_dict['min_sl']
+    leverage = signal_dict['leverage']
+    risk_level = signal_dict['risk_level']    
 
-    analysis_logic = load_prompt_template()
+    # --- Rest of your prompt logic (unchanged) ---
+    analysis_logic = get_setting("prompt_text")
+
+    entry_and_managment = (
+        f"\nAnalisys for {symbol}:\n"
+        f"Current market price: {latest_close_price}\n"
+        f"Suggested Take Profit (TP): {take_profit}% or 3× the Stop Loss distance (1:3 risk-reward ratio)\n"
+        f"Suggested Stop Loss (SL): {stop_loss}%, or a dynamic level placed just beyond the most recent swing high/low or key resistance/support zone\n"
+        f"Leverage: {leverage}x\n"
+        f"Risk Level: {risk_level}% of available balance ({balance} USDC)\n"
+        "Based on this, calculate precise entry, TP, and SL levels.\n"
+    )
 
     # Enhanced funding context with actual data
     funding_context = (
-        "ANÁLISIS DE TASA DE FINANCIAMIENTO (datos reales):\n"
-        f"• Tasa actual: {current_funding:.6f} ({current_funding*10000:.2f} bps)\n"
-        f"• Tendencia: {funding_trend}\n"
-        f"• Es extremo: {'SÍ' if funding_extreme else 'NO'}\n"
-        "Interpretación:\n"
-        "- Funding >0: Largos pagan → posible presión bajista\n"
-        "- Funding <0: Cortos pagan → posible presión alcista\n"
-        "- |Funding|>0.05%: Señal contraria fuerte\n"
+        "\nFUNDING RATE ANALYSIS (real data):\n"
+        f"• Current rate: {current_funding:.6f} ({current_funding*10000:.2f} bps)\n"
+        f"• Trend: {funding_trend}\n"
+        f"• Is extreme: {'YES' if funding_extreme else 'NO'}\n"
+        "Interpretation:\n"
+        "- Funding >0: Longs pay → potential bearish pressure\n"
+        "- Funding <0: Shorts pay → potential bullish pressure\n"
+        "- |Funding|>0.05%: Strong contrarian signal\n"
     )
 
     # Enhanced liquidation context
     liquidation_context = (
-        "CLUSTERS DE LIQUIDACIÓN (datos reales):\n"
-        f"• Total 24h: {total_liquidations} liquidaciones\n"
-        f"• Cerca del precio actual: {nearby_liquidations}\n"
-        "Implicaciones:\n"
-        "- Múltiples liquidaciones cerca: zona de alta volatilidad\n"
-        "- Smart money puede cazar stops en estos niveles\n"
-        "- Considerar colocar SL fuera de clusters de liquidación\n"
+        "\nLIQUIDATION CLUSTERS (real data):\n"
+        f"• Total 24h: {total_liquidations} liquidations\n"
+        f"• Near current price: {nearby_liquidations}\n"
+        "Implications:\n"
+        "- Multiple liquidations nearby: high volatility zone\n"
+        "- Smart money may hunt stops at these levels\n"
+        "- Consider placing SL outside liquidation clusters\n"
     )
 
+    language = os.getenv("BOT_LANGUAGE", "en")
 
     response_format = (
-        "\nRetorna SOLAMENTE un objeto JSON válido con las siguientes claves:\n"
+        "\nReturn ONLY a valid JSON object with the following keys:\n"
         "- symbol: str (e.g., 'PERP_BTC_USDC')\n"
         "- side: str ('BUY' or 'SELL')\n"
         "- entry: float (use current market price as base)\n"
         "- take_profit: float\n"
         "- stop_loss: float\n"
-        "- Resume of analysis\n"
-        "\nDo NOT include any other text, explanation, or markdown. Only pure JSON."
+        "- approved: bool (true if trade is approved, false otherwise)\n"
+        "- resume_of_analysis: str (explanation why the trade is rejected or approved)\n"
+        f" - respond in the user language defined as {language}\n"
+        "\nOnly pure JSON."
     )
 
-    # Enhanced risk context with liquidation awareness
-    risk_context = (
-        f"\n--- PARÁMETROS DE RIESGO CON DATOS REALES ---\n"
-        f"• Ratio R:B: 1:3 obligatorio\n"
-        f"• Funding actual: {current_funding:.6f} → {'ALCISTA' if current_funding < -0.0001 else 'BAJISTA' if current_funding > 0.0001 else 'NEUTRO'}\n"
-        f"• Liquidaciones cercanas: {nearby_liquidations} → {'ALTA VOLATILIDAD' if nearby_liquidations > 5 else 'VOLATILIDAD MODERADA'}\n"
-    )
-
-    additional_market_context = (
-        "\n\nCONTEXTO ADICIONAL DEL MERCADO A CONSIDERAR:\n"
-        "- Analiza los extremos de funding rate para oportunidades de trading contrario\n"
-        "- Identifica clusters de liquidación que pueden causar movimientos violentos\n"
-        "- Combina la profundidad del orderbook con niveles de liquidación para S/R clave\n"
-        "- Usa las tendencias de funding para medir la saturación de sentimiento del mercado\n"
-    )
-
-    prompt = intro + analysis_logic + risk_context + additional_market_context + response_format
+    prompt = analysis_logic + entry_and_managment + funding_context + liquidation_context +  response_format
 
     # Debug the prompt
     logger.debug(f"LLM Prompt:\n{prompt}\n--- End of Prompt ---")
@@ -222,85 +204,103 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     
     if response.status_code == 200:
         content = response.json()['choices'][0]['message']['content']
-        # Check if LLM approves the trade
-        approved = "DO NOT EXECUTE" not in content.upper()
-        return {"analysis": content, "approved": approved}
-    return {"analysis": "LLM analysis failed", "approved": False}
-
+        # Check from response format the resume_of_analysis, simple return from json
+        try:
+            json_start = content.find('{')
+            json_end = content.rfind('}') + 1
+            json_str = content[json_start:json_end]
+            result = json.loads(json_str)
+            return {
+                "approved": True,
+                "analysis": content,
+                **result
+            }
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning(f"Failed to parse LLM JSON response: {e}")
+            return {
+                "approved": False,
+                "analysis": content
+            }
+    else:
+        logger.error(f"LLM request failed with status {response.status_code}: {response.text}")
+        return {
+            "approved": False,
+            "analysis": f"LLM request failed with status {response.status_code}"
+        }
+        
 
 def process_signal():
-    """Process incoming signal from Api bot with combined CSV + orderbook file"""
-
-    # Only proceed if bot is running
-    if not get_bot_status():
-        logger.info("Bot is paused. Waiting to resume...")
-
-
-    # get values from settings, as dict
-    signal = {
-        "asset": get_setting("asset"),
-        "interval": get_setting("interval"),
-        "risk_level": float(get_setting("risk_level")),
-        "leverage": int(get_setting("leverage")),
-        "min_tp": float(get_setting("min_tp")),
-        "min_sl": float(get_setting("min_sl")),
-        "auto_trade": get_setting("auto_trade").lower() == 'true',
-        "indicator": get_setting("indicator")
-    }
-    
-    # --- LIQUIDITY PERSISTENCE CHECK ---
-    cex_check = lpm.validate_cex_consensus_for_dex_asset(signal["asset"])
-    if cex_check["consensus"] == "NO_CEX_PAIR":
-        logger.info(f"🛑 {signal['asset']} CEX consensus check failed: {cex_check['reason']}")
-        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"🛑 {signal['asset']} CEX consensus check failed: {cex_check['reason']}")
-        time.sleep(30)
-
-    elif cex_check["consensus"] == "LOW":
-        logger.info(f"❌ Skipping {signal['asset']}: LOW CEX consensus ({cex_check['reason']})")
-        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"❌ Skipping {signal['asset']}: LOW CEX consensus ({cex_check['reason']})")
-        time.sleep(30)
-
-    else:
-        logger.info(f"✅ {signal['asset']} passed CEX consensus: {cex_check['reason']}")
-    
-    # Analyze with LLM
-    logger.info(f"Analyzing signal for {signal['asset']} with LLM...")
-    llm_result = analyze_with_llm(signal)
-    print(llm_result["approved"])
-    if not bool(llm_result["approved"]):
-        logger.info(f"LLM rejected signal for {signal['asset']}: {llm_result['analysis'][:200]}...")
-        message = f"LLM rejected signal for {signal['asset']}:\n{llm_result['analysis']}"
-        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), message)
-        time.sleep(30)
-    
-    # Parse the JSON from LLM analysis
-    # perform only if the setting auto_trade is true
-    if not signal["auto_trade"]:
-        return
-    
+    """
+    Main entry point for signal processing.
+    Called by Telegram bot. Must return a string.
+    """
     try:
-        # Extract JSON from code blocks if present
-        analysis = llm_result["analysis"]
-        if '```json' in analysis:
-            json_start = analysis.find('```json') + 7
-            json_end = analysis.find('```', json_start)
-            if json_end == -1:
-                json_end = len(analysis)
-            json_str = analysis[json_start:json_end].strip()
+        # --- Fetch required settings ---
+        asset = get_setting("asset")
+        interval = get_setting("interval")
+        min_tp = get_setting("min_tp")
+        min_sl = get_setting("min_sl")
+        leverage = get_setting("leverage")
+        risk_level = get_setting("risk_level")
+        indicator = get_setting("indicator")
+
+        # --- Validate settings ---
+        missing = []
+        if not asset: missing.append("asset")
+        if not interval: missing.append("interval")
+        if not min_tp: missing.append("min_tp")
+        if not min_sl: missing.append("min_sl")
+        if not leverage: missing.append("leverage")
+        if not risk_level: missing.append("risk_level")
+
+        if missing:
+            return f"❌ Missing settings: {', '.join(missing)}. Please configure them via /list."
+
+        # --- Convert types ---
+        try:
+            min_tp = float(min_tp)
+            min_sl = float(min_sl)
+            leverage = int(leverage)
+            risk_level = float(risk_level)
+        except (ValueError, TypeError) as e:
+            return f"❌ Invalid setting format: {str(e)}"
+
+        # --- Build signal dict ---
+        signal_dict = {
+            "asset": asset,
+            "interval": interval,
+            "min_tp": min_tp,
+            "min_sl": min_sl,
+            "leverage": leverage,
+            "risk_level": risk_level,
+            "indicator": indicator or "Trend-Following",
+        }
+
+        # --- Call LLM analyzer ---
+        llm_result = analyze_with_llm(signal_dict)
+
+        # --- Format response ---
+        if isinstance(llm_result, dict) and llm_result.get("approved"):
+            try:
+                return (
+                    f"✅ TRADE APPROVED\n"
+                    f"• Symbol: {llm_result['symbol']}\n"
+                    f"• Side: {llm_result['side']}\n"
+                    f"• Entry: {float(llm_result['entry']):.6f}\n"
+                    f"• TP: {float(llm_result['take_profit']):.6f}\n"
+                    f"• SL: {float(llm_result['stop_loss']):.6f}\n"
+                    f"• Reason: {llm_result.get('resume_of_analysis', 'N/A')}"
+                )
+            except (KeyError, ValueError, TypeError) as e:
+                return f"⚠️ Trade approved but malformed output: {str(e)}"
         else:
-            json_str = analysis.strip()
-        
-        parsed_signal = json.loads(json_str)
-        
-        # Ensure required fields are present
-        required_fields = ['symbol', 'side', 'entry', 'stop_loss', 'take_profit', 'confidence']
-        if not all(field in parsed_signal for field in required_fields):
-            raise ValueError("Missing required fields")
-            
-    except (json.JSONDecodeError, KeyError, ValueError) as e:
-        logger.warning(f"Failed to parse LLM JSON response for {signal['asset']}: {e}")    
-    
-    # Execute position using your existing executor
-    execution_result = place_futures_order(parsed_signal)
-    
-    logger.info(f"Execution result for {signal['asset']}: {execution_result}")
+            reason = "Unknown"
+            if isinstance(llm_result, dict):
+                reason = llm_result.get("analysis", "No analysis provided")
+            elif isinstance(llm_result, str):
+                reason = llm_result
+            return f"❌ TRADE REJECTED\n• Reason: {str(reason)[:300]}..."  # Truncate long responses
+
+    except Exception as e:
+        logger.exception("Error in process_signal")
+        return f"🔥 Internal error: {str(e)}"
