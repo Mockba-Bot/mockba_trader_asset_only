@@ -19,5 +19,3 @@ services:
       - WATCHTOWER_POLL_INTERVAL=300
       - WATCHTOWER_LIFECYCLE_HOOKS=true
       - WATCHTOWER_LABEL_ENABLE=true
-    networks:
-      - mockba-apolo-net
