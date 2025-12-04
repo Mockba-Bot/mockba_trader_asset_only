@@ -299,7 +299,7 @@ def ListSettings(m):
     except Exception:
         # Fallback to plain text if HTML fails
         plain_text = "Current Settings:\n" + "\n".join(f"{k}: {v}" for k, v in sorted(settings.items()))
-        bot.send_message(cid, plain_text, cid)
+        bot.send_message(cid, plain_text)
 
 
 # Start polling
