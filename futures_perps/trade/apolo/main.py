@@ -43,7 +43,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     df = get_historical_data_limit_apolo(
         symbol=signal_dict['asset'],
         interval=signal_dict['interval'],
-        limit=500,
+        limit=250,
         strategy=signal_dict.get('indicator')
     )
     csv_content = df.to_csv(index=False)  # ← Preserves all columns automatically
