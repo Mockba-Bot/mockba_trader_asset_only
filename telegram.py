@@ -8,7 +8,7 @@ from deep_translator import GoogleTranslator
 import telebot
 from telebot import types
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-from db.db_ops import get_bot_status, startStopBotOp, upsert_setting, get_all_settings, initialize_database_tables, get_setting
+from db.db_ops import upsert_setting, get_all_settings, initialize_database_tables, get_setting
 from futures_perps.trade.apolo.main import process_signal as run_process_signal  # Rename to avoid conflict
 import json
 from datetime import timedelta

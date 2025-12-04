@@ -31,6 +31,7 @@ def initialize_database_tables():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
         # Insert the default setting if it doesn't exist
         # key: asset, value: PERP_BTC_USDC
         # key: risk_level, value: 1.5
@@ -60,25 +61,6 @@ def initialize_database_tables():
         conn.commit()
         logger.info("✅ SQLite tables initialized.")
 
-# get bot status
-def get_bot_status():
-    with get_db_connection() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT is_running FROM bot_control WHERE id = 1")
-        row = cur.fetchone()
-        return bool(row['is_running']) if row else True  # default to True
-
-
-# start or stop the bot
-def startStopBotOp(status: bool):
-    with get_db_connection() as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE bot_control
-            SET is_running = ?
-            WHERE id = 1
-        """, (int(status),))
-        conn.commit()
 
 # Def to insert or update settings
 def upsert_setting(key: str, value: str):
