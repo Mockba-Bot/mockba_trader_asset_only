@@ -192,8 +192,14 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             json_end = content.rfind('}') + 1
             json_str = content[json_start:json_end]
             result = json.loads(json_str)
+
+            # Extract approved flag FROM LLM response
+            llm_approved = result.get('approved', False)
+            if isinstance(llm_approved, str):
+                llm_approved = llm_approved.lower() == 'true'
+
             return {
-                "approved": True,
+                "approved": bool(llm_approved),  # ← Now respects LLM decision
                 "analysis": content,
                 "symbol": result.get('symbol', signal_dict['asset']),
                 "side": result.get('side', 'BUY'),
