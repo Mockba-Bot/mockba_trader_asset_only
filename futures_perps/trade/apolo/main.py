@@ -149,16 +149,16 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     language = os.getenv("BOT_LANGUAGE", "en")
 
     response_format = (
-        "\nDevuelve SOLO un objeto JSON válido con las siguientes claves:\n"
-        "- symbol: str (ej., 'PERP_BTC_USDC')\n"
-        "- side: str ('BUY' o 'SELL')\n"
-        "- entry: float (usa el precio de mercado actual como base)\n"
-        "- take_profit: float\n"
-        "- stop_loss: float\n"
-        "- approved: bool (true si el trade está aprobado, false en caso contrario)\n"
-        "- resume_of_analysis: str (explicación por qué el trade es rechazado o aprobado)\n"
-        f" - responde en el idioma del usuario definido como {language}\n"
-        "\nSolo JSON puro."
+        f"\nResponde EXCLUSIVAMENTE en {language} y genera ÚNICAMENTE un objeto JSON válido, SIN NINGÚN texto adicional, SIN markdown, SIN explicaciones previas o posteriores.\n"
+        "El JSON debe contener EXACTAMENTE estas claves:\n"
+        "- symbol: string (ej. 'PERP_BTC_USDC')\n"
+        "- side: string ('BUY' o 'SELL')\n"
+        "- entry: número decimal (usa el precio de mercado actual como base)\n"
+        "- take_profit: número decimal\n"
+        "- stop_loss: número decimal\n"
+        "- approved: booleano (true si el trade cumple TODAS las reglas; false si viola CUALQUIER regla dura)\n"
+        "- resume_of_analysis: string con un resumen claro de 5–10 oraciones que explique: acción del precio reciente, desequilibrio en libro de órdenes, niveles de liquidez/liquidaciones cercanas, estado del RSI, y tasa de funding. Debe ser comprensible para un trader.\n\n"
+        "NO agregues comentarios, notas, ni formato adicional. SOLO el JSON."
     )
 
     prompt = analysis_logic + entry_and_management + funding_context + liquidation_context +  response_format
