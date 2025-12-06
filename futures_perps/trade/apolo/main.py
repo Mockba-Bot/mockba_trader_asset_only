@@ -301,12 +301,26 @@ def process_signal():
             except (KeyError, ValueError, TypeError) as e:
                 return f"⚠️ Trade approved but malformed output: {str(e)}"            
         else:
-            reason = "Unknown"
             if isinstance(llm_result, dict):
-                reason = llm_result.get("analysis", "No analysis provided")
-            elif isinstance(llm_result, str):
-                reason = llm_result
-            return f"❌ TRADE REJECTED\n• Reason: {str(reason)[:300]}..."  # Truncate long responses
+                # Prefer the clean analysis summary
+                reason = llm_result.get("resume_of_analysis") or llm_result.get("analysis", "No reason provided.")
+            else:
+                reason = str(llm_result)
+
+            # Clean up if reason starts with JSON (fallback)
+            reason = str(reason).strip()
+            if reason.startswith("{"):
+                # Try to extract resume_of_analysis from raw JSON string
+                try:
+                    raw_json_start = reason.find('{')
+                    raw_json_end = reason.rfind('}') + 1
+                    raw_json_str = reason[raw_json_start:raw_json_end]
+                    fallback = json.loads(raw_json_str)
+                    reason = fallback.get("resume_of_analysis", "Trade rejected by LLM.")
+                except:
+                    reason = "Trade rejected due to failing hard rules (see analysis)."
+
+            return f"❌ TRADE REJECTED\n• Reason: {reason[:500]}"  # Allow slightly more for clarity
 
     except Exception as e:
         logger.exception("Error in process_signal")
