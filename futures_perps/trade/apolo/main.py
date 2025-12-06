@@ -120,7 +120,8 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         f"Stop Loss sugerido (SL): {stop_loss}%, o un nivel dinámico colocado justo más allá del swing alto/bajo más reciente o zona clave de resistencia/soporte\n"
         f"Apalancamiento: {leverage}x\n"
         f"Nivel de Riesgo: {risk_level}% del saldo disponible ({balance} USDC)\n"
-        "Basado en esto, calcula niveles precisos de entrada, TP y SL.\n"
+        f"Columnas disponibles en los datos históricos (CSV): {', '.join(df.columns)}\n"
+        "Usa ÚNICAMENTE los valores ya calculados en estas columnas. NO calcules nuevos indicadores. Basado en esto, proporciona entry, TP y SL como precios absolutos (float).\n"
     )
 
     # Contexto de funding mejorado con datos reales
