@@ -158,7 +158,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         "- take_profit: número decimal\n"
         "- stop_loss: número decimal\n"
         "- approved: booleano (true si el trade cumple TODAS las reglas; false si viola CUALQUIER regla dura)\n"
-        "- resume_of_analysis: string con un resumen claro de 5–10 oraciones que explique: acción del precio reciente, desequilibrio en libro de órdenes, niveles de liquidez/liquidaciones cercanas, estado del RSI, y tasa de funding. Debe ser comprensible para un trader.\n\n"
+        "- resume_of_analysis: string con un resumen claro que explique: acción del precio reciente, desequilibrio en libro de órdenes, niveles de liquidez/liquidaciones cercanas, estado del RSI, y tasa de funding. Debe ser comprensible para un trader.\n\n"
         "NO agregues comentarios, notas, ni formato adicional. SOLO el JSON."
     )
 
