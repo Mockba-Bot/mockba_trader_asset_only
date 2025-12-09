@@ -253,8 +253,9 @@ def process_signal(m):
     if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
 
     asset = get_setting("asset")
+    interval = get_setting("interval")
 
-    bot.send_message(cid, translate(f"Processing signal for {asset} with LLM...", cid))
+    bot.send_message(cid, translate(f"Processing signal for {asset} interval {interval} with LLM...", cid))
     try:
         result = run_process_signal()  # renamed import
     except Exception as e:
