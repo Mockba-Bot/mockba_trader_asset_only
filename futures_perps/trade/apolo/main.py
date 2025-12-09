@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import your executor
-from trading_bot.futures_executor_apolo import place_futures_order, get_user_statistics, get_available_balance, ORDERLY_ACCOUNT_ID, ORDERLY_SECRET, ORDERLY_PUBLIC_KEY
+from trading_bot.futures_executor_apolo import place_futures_order, get_close_price, get_available_balance, ORDERLY_ACCOUNT_ID, ORDERLY_SECRET, ORDERLY_PUBLIC_KEY
 
 from trading_bot.send_bot_message import send_bot_message
 
@@ -56,6 +56,14 @@ def analyze_with_llm(signal_dict: dict) -> dict:
 
     latest_close = float(df['close'].iloc[-1])
     csv_content = df.to_csv(index=False)
+
+    # === Fetch live price ===
+    live_price = get_close_price(ORDERLY_ACCOUNT_ID, signal_dict['asset'])
+    if live_price is None:
+        live_price = latest_close
+        logger.warning("Falling back to candle close price (WebSocket failed)")
+
+    price_delta_pct = (live_price / latest_close - 1) * 100
 
     # === 2. Auxiliary data ===
     orderbook = get_orderbook(signal_dict['asset'], limit=20)
@@ -102,7 +110,9 @@ def analyze_with_llm(signal_dict: dict) -> dict:
 
     context = (
         f"Activo: {signal_dict['asset']}\n"
-        f"Precio actual: {latest_close:.6f}\n"
+        f"Precio de cierre de la última vela: {latest_close:.6f}\n"
+        f"Precio en vivo (último trade): {live_price:.6f}\n"
+        f"Diferencia intra-candle: {price_delta_pct:+.3f}%\n"
         f"Saldo disponible: {balance:.2f} USDC\n"
         f"Apalancamiento: {leverage}x\n"
         f"Nivel de riesgo: {risk_level}%\n"
@@ -126,14 +136,13 @@ def analyze_with_llm(signal_dict: dict) -> dict:
 
     prompt = user_prompt + hard_rules_note + context + response_format
 
-    # send the prompt to Telegram bot is the value of show_prompt is True
     if get_setting("show_prompt") == "True":
-        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"📝 Prompt enviado al LLM:\n\n{prompt}")  # limit to first 4000 chars
+        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"📝 Prompt enviado al LLM:\n\n{prompt}")
 
-    # === 5. Call LLM (FIX: remove trailing spaces in URL!) ===
+    # === 5. Call LLM ===
     try:
         response = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",  # ← FIXED
+            "https://api.deepseek.com/v1/chat/completions",  # ✅ No trailing spaces
             headers={"Authorization": f"Bearer {os.getenv('DEEP_SEEK_API_KEY')}"},
             json={
                 "model": "deepseek-chat",
@@ -190,6 +199,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     min_imbalance = 1.6
 
     rsi_ok = True
+    latest_rsi = None
     if 'RSI' in df.columns:
         latest_rsi = float(df['RSI'].iloc[-1])
         if llm_side == "BUY" and latest_rsi > 70:
@@ -204,7 +214,10 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     stop_loss = take_profit = entry
     explanation_for_user = ""
 
-    if llm_side == "BUY" and llm_approved and is_buy_structure and bid_imbalance >= min_imbalance and rsi_ok:
+    # ✅ BUY: include live price alignment
+    if (llm_side == "BUY" and llm_approved and is_buy_structure 
+        and bid_imbalance >= min_imbalance and rsi_ok 
+        and price_delta_pct >= -0.1):
         swing_low = min(last_3_lows)
         min_sl_distance = entry * min_sl_pct
         stop_loss = min(swing_low * 0.999, entry - min_sl_distance)
@@ -217,10 +230,14 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             "• Estructura alcista confirmada (mínimos ascendentes).\n"
             f"• Fuerte demanda en libro de órdenes ({bid_imbalance:.1f}x más bids que asks).\n"
             f"• RSI en zona segura ({latest_rsi:.1f}).\n"
+            f"• Precio en vivo alineado ({price_delta_pct:+.2f}% desde cierre).\n"
             f"• TP/SL calculados con gestión de riesgo 1:3."
         )
 
-    elif llm_side == "SELL" and llm_approved and is_sell_structure and ask_imbalance >= min_imbalance and rsi_ok:
+    # ✅ SELL: include live price alignment
+    elif (llm_side == "SELL" and llm_approved and is_sell_structure 
+          and ask_imbalance >= min_imbalance and rsi_ok 
+          and price_delta_pct <= 0.1):
         swing_high = max(last_3_highs)
         min_sl_distance = entry * min_sl_pct
         stop_loss = max(swing_high * 1.001, entry + min_sl_distance)
@@ -233,11 +250,12 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             "• Estructura bajista confirmada (máximos descendentes).\n"
             f"• Fuerte oferta en libro de órdenes ({ask_imbalance:.1f}x más asks que bids).\n"
             f"• RSI en zona segura ({latest_rsi:.1f}).\n"
+            f"• Precio en vivo alineado ({price_delta_pct:+.2f}% desde cierre).\n"
             f"• TP/SL calculados con gestión de riesgo 1:3."
         )
 
     else:
-        # Build rejection explanation
+        # Build rejection explanation — include live price if relevant
         reasons = []
         if llm_side == "BUY" and not is_buy_structure:
             reasons.append("estructura NO alcista (no hay mínimos ascendentes)")
@@ -251,6 +269,11 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             reasons.append("RSI en zona de sobrecompra/sobreventa extrema")
         if not llm_approved:
             reasons.append("análisis técnico no confirma la dirección")
+        # ✅ Add live price divergence
+        if llm_side == "BUY" and price_delta_pct < -0.1:
+            reasons.append(f"precio en vivo cayendo ({price_delta_pct:.2f}%)")
+        if llm_side == "SELL" and price_delta_pct > 0.1:
+            reasons.append(f"precio en vivo subiendo ({price_delta_pct:.2f}%)")
 
         explanation_for_user = (
             "❌ Señal RECHAZADA.\n" +
@@ -266,7 +289,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         "take_profit": float(take_profit),
         "resume_of_analysis": llm_reason,
         "analysis": content,
-        "explanation_for_user": explanation_for_user  # ← NEW: user-friendly summary
+        "explanation_for_user": explanation_for_user
     }
         
 
