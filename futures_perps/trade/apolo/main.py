@@ -372,7 +372,7 @@ def process_signal():
                 except:
                     reason = "Trade rejected due to failing hard rules (see analysis)."
 
-            return f"❌ TRADE REJECTED\n• Reason: {reason[:500]}"  # Allow slightly more for clarity
+            return f"❌ TRADE REJECTED\n• Reason: {reason}"  # Allow slightly more for clarity
 
     except Exception as e:
         logger.exception("Error in process_signal")
