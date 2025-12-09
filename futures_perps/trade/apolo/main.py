@@ -179,8 +179,8 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     is_buy_structure = last_3_lows[0] <= last_3_lows[1] <= last_3_lows[2]
     is_sell_structure = last_3_highs[0] >= last_3_highs[1] >= last_3_highs[2]
 
-    bids = sum(qty for _, qty in orderbook.get('bids', [])[:15])
-    asks = sum(qty for _, qty in orderbook.get('asks', [])[:15])
+    bids = sum(float(qty) for _, qty in orderbook.get('bids', [])[:15])
+    asks = sum(float(qty) for _, qty in orderbook.get('asks', [])[:15])
     bid_imbalance = bids / asks if asks > 0 else float('inf')
     ask_imbalance = asks / bids if bids > 0 else float('inf')
     min_imbalance = 1.6
@@ -277,6 +277,10 @@ def process_signal():
         interval = get_setting("interval")
         min_tp = get_setting("min_tp")
         min_sl = get_setting("min_sl")
+        #
+        min_tp = float(min_tp)
+        min_sl = float(min_sl)
+
         leverage = get_setting("leverage")
         risk_level = get_setting("risk_level")
         indicator = get_setting("indicator")
