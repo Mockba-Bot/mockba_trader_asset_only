@@ -35,6 +35,31 @@ def format_orderbook_as_text(ob: dict) -> str:
     
     return "\n".join(lines)
 
+# Helper: Format approval message
+def format_approval_message(symbol, side, entry, tp, sl, rsi, imbalance, price_delta_pct) -> str:
+    side_emoji = "🟢 LONG" if side == "BUY" else "🔴 SHORT"
+    direction = "COMPRA" if side == "BUY" else "VENTA"
+    
+    msg = (
+        f"✅ <b>TRADE APROBADA</b>\n\n"
+        f"• Activo: <code>{symbol}</code>\n"
+        f"• Dirección: <b>{side_emoji} {direction}</b>\n"
+        f"• Entrada: <code>{entry:.6f}</code>\n"
+        f"• Take Profit: <code>{tp:.6f}</code>\n"
+        f"• Stop Loss: <code>{sl:.6f}</code>\n"
+        f"• RSI: {rsi:.1f}\n"
+        f"• Liquidez: {imbalance:.1f}x ({'bids' if side == 'BUY' else 'asks'})\n"
+        f"• Precio en vivo: {price_delta_pct:+.2f}%\n\n"
+        f"<i>✅ High-conviction setup. Risk:reward ≥ 1:3.</i>"
+    )
+    return msg
+
+# Helper: Format rejection message
+def format_rejection_message(reasons: list) -> str:
+    header = "❌ <b>TRADE REJECTED</b>"
+    bullets = "\n".join(f"• {reason}" for reason in reasons)
+    footer = "\n\n<i>Wait for clearer structure. Discipline = compounding.</i>"
+    return f"{header}\n\n{bullets}{footer}"
 
 def analyze_with_llm(signal_dict: dict) -> dict:
     """LLM analyzes full candle context; Python enforces prices and hard rules."""
@@ -255,31 +280,26 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         )
 
     else:
-        # Build rejection explanation — include live price if relevant
-        reasons = []
+        # Build rejection reasons list (for later formatting)
+        rejection_reasons = []
         if llm_side == "BUY" and not is_buy_structure:
-            reasons.append("estructura NO alcista (no hay mínimos ascendentes)")
+            rejection_reasons.append("estructura NO alcista (no hay mínimos ascendentes)")
         if llm_side == "SELL" and not is_sell_structure:
-            reasons.append("estructura NO bajista (no hay máximos descendentes)")
+            rejection_reasons.append("estructura NO bajista (no hay máximos descendentes)")
         if llm_side == "BUY" and bid_imbalance < min_imbalance:
-            reasons.append(f"desequilibrio insuficiente en libro ({bid_imbalance:.1f}x < {min_imbalance}x)")
+            rejection_reasons.append(f"desequilibrio insuficiente en libro ({bid_imbalance:.1f}x < {min_imbalance}x)")
         if llm_side == "SELL" and ask_imbalance < min_imbalance:
-            reasons.append(f"oferta insuficiente en libro ({ask_imbalance:.1f}x < {min_imbalance}x)")
+            rejection_reasons.append(f"oferta insuficiente en libro ({ask_imbalance:.1f}x < {min_imbalance}x)")
         if not rsi_ok:
-            reasons.append("RSI en zona de sobrecompra/sobreventa extrema")
+            rejection_reasons.append("RSI en zona de sobrecompra/sobreventa extrema")
         if not llm_approved:
-            reasons.append("análisis técnico no confirma la dirección")
-        # ✅ Add live price divergence
+            rejection_reasons.append("análisis técnico no confirma la dirección")
         if llm_side == "BUY" and price_delta_pct < -0.1:
-            reasons.append(f"precio en vivo cayendo ({price_delta_pct:.2f}%)")
+            rejection_reasons.append(f"precio en vivo cayendo ({price_delta_pct:.2f}%)")
         if llm_side == "SELL" and price_delta_pct > 0.1:
-            reasons.append(f"precio en vivo subiendo ({price_delta_pct:.2f}%)")
+            rejection_reasons.append(f"precio en vivo subiendo ({price_delta_pct:.2f}%)")
 
-        explanation_for_user = (
-            "❌ Señal RECHAZADA.\n" +
-            ("• " + "\n• ".join(reasons) if reasons else "• No se cumplieron las condiciones mínimas de seguridad.")
-        )
-
+    # Return full context for formatting later
     return {
         "approved": final_approved,
         "symbol": signal_dict['asset'],
@@ -287,9 +307,11 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         "entry": float(entry),
         "stop_loss": float(stop_loss),
         "take_profit": float(take_profit),
+        "rsi": latest_rsi,
+        "imbalance": bid_imbalance if final_side == "BUY" else ask_imbalance,
+        "price_delta_pct": price_delta_pct,
+        "rejection_reasons": rejection_reasons,  # ← key for beautiful rejection
         "resume_of_analysis": llm_reason,
-        "analysis": content,
-        "explanation_for_user": explanation_for_user
     }
         
 
@@ -304,10 +326,6 @@ def process_signal():
         interval = get_setting("interval")
         min_tp = get_setting("min_tp")
         min_sl = get_setting("min_sl")
-        #
-        min_tp = float(min_tp)
-        min_sl = float(min_sl)
-
         leverage = get_setting("leverage")
         risk_level = get_setting("risk_level")
         indicator = get_setting("indicator")
@@ -347,55 +365,40 @@ def process_signal():
         # --- Call LLM analyzer ---
         llm_result = analyze_with_llm(signal_dict)
 
-        # --- Format response ---
+        # --- Handle result with beautiful formatting ---
         if isinstance(llm_result, dict) and llm_result.get("approved"):
-            try:
-                # the signal was approved, if the auto_trade setting is true, place the order
-                # and create the dict required to place the order, the values are
-                # symbol, side, take_profit, stop_loss, leverage
-                if get_setting("auto_trade") == "True":
-                    signal_dict = {
+            # Auto-trade if enabled
+            if get_setting("auto_trade") == "True":
+                try:
+                    order_payload = {
                         "symbol": llm_result['symbol'],
                         "side": llm_result['side'],
-                        "entry": float(llm_result['entry']),   
+                        "entry": float(llm_result['entry']),
                         "take_profit": float(llm_result['take_profit']),
                         "stop_loss": float(llm_result['stop_loss']),
                         "leverage": leverage
                     }
-                    place_futures_order(signal_dict)  
-                return (
-                    f"✅ TRADE APPROVED\n"
-                    f"• Symbol: {llm_result['symbol']}\n"
-                    f"• Side: {llm_result['side']}\n"
-                    f"• Entry: {float(llm_result['entry']):.6f}\n"
-                    f"• TP: {float(llm_result['take_profit']):.6f}\n"
-                    f"• SL: {float(llm_result['stop_loss']):.6f}\n"
-                    f"• Reason: {llm_result.get('resume_of_analysis', 'N/A')}"
-                )
+                    place_futures_order(order_payload)
+                except Exception as e:
+                    logger.error(f"Auto-trade failed: {e}")
+                    return f"⚠️ Signal approved but order failed: {str(e)}"
 
-            except (KeyError, ValueError, TypeError) as e:
-                return f"⚠️ Trade approved but malformed output: {str(e)}"            
+            # Return beautiful approval message
+            return format_approval_message(
+                symbol=llm_result['symbol'],
+                side=llm_result['side'],
+                entry=llm_result['entry'],
+                tp=llm_result['take_profit'],
+                sl=llm_result['stop_loss'],
+                rsi=llm_result.get('rsi', 0.0),
+                imbalance=llm_result.get('imbalance', 0.0),
+                price_delta_pct=llm_result.get('price_delta_pct', 0.0)
+            )
+
         else:
-            if isinstance(llm_result, dict):
-                # Prefer the clean analysis summary
-                reason = llm_result.get("resume_of_analysis") or llm_result.get("analysis", "No reason provided.")
-            else:
-                reason = str(llm_result)
-
-            # Clean up if reason starts with JSON (fallback)
-            reason = str(reason).strip()
-            if reason.startswith("{"):
-                # Try to extract resume_of_analysis from raw JSON string
-                try:
-                    raw_json_start = reason.find('{')
-                    raw_json_end = reason.rfind('}') + 1
-                    raw_json_str = reason[raw_json_start:raw_json_end]
-                    fallback = json.loads(raw_json_str)
-                    reason = fallback.get("resume_of_analysis", "Trade rejected by LLM.")
-                except:
-                    reason = "Trade rejected due to failing hard rules (see analysis)."
-
-            return f"❌ TRADE REJECTED\n• Reason: {reason}"  # Allow slightly more for clarity
+            # Return beautiful rejection message
+            reasons = llm_result.get("rejection_reasons", ["No specific reason provided."]) if isinstance(llm_result, dict) else ["Internal rejection."]
+            return format_rejection_message(reasons)
 
     except Exception as e:
         logger.exception("Error in process_signal")
