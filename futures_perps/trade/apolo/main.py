@@ -126,6 +126,10 @@ def analyze_with_llm(signal_dict: dict) -> dict:
 
     prompt = user_prompt + hard_rules_note + context + response_format
 
+    # send the prompt to Telegram bot is the value of show_prompt is True
+    if get_setting("show_prompt") == "True":
+        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"📝 Prompt enviado al LLM:\n\n{prompt}")  # limit to first 4000 chars
+
     # === 5. Call LLM (FIX: remove trailing spaces in URL!) ===
     try:
         response = requests.post(

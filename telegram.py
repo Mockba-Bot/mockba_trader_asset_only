@@ -97,7 +97,8 @@ def callback_handler(call):
         'set_leverage': set_leverage,
         'set_prompt': set_prompt,
         'ListSettings': ListSettings,
-        'ProcessSignal': process_signal
+        'ProcessSignal': process_signal,
+        'set_show_prompt': set_show_prompt,
     }
     func = options.get(call.data)
     if func:
@@ -119,7 +120,8 @@ def settings(m):
         "set_auto_trade": "🤖 Auto Trade",
         "set_indicator": "📊 Indicator",
         "set_leverage": "⚖️ Leverage",
-        "set_prompt": "💬 Prompt Text"
+        "set_prompt": "💬 Prompt Text",
+        "set_show_prompt": "👁️ Show Prompt"
     }
     buttons = [[InlineKeyboardButton(translate(v, cid), callback_data=k)] for k, v in labels.items()]
     bot.send_message(cid, translate("Available options.", cid), reply_markup=InlineKeyboardMarkup(buttons))
@@ -161,6 +163,10 @@ def upsert_assets(m):
     elif gp1 == "interval":
         if not re.match(r"^\d+[mhd]$", valor.lower()):
             valid, error_msg = False, "Invalid interval (e.g., 15m, 1h)"
+    # show prompt validation
+    elif gp1 == "show_prompt":
+        if valor not in ("True", "False"):
+            valid, error_msg = False, "Show Prompt must be 'True' or 'False'"        
     # prompt_text: no validation
 
     if not valid:
@@ -244,6 +250,16 @@ def set_prompt(m):
     bot.send_message(m.chat.id, translate("Enter prompt text:", m.chat.id))
     bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
+def set_show_prompt(m):
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "show_prompt"
+    cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
+    markup = types.ReplyKeyboardMarkup(row_width=2)
+    markup.add("True", "False", "CANCEL")
+    bot.send_message(cid, translate("Select Show Prompt:", cid), reply_markup=markup)
+    bot.register_next_step_handler_by_chat_id(cid, upsert_assets)    
+
 
 # === Main Actions ===
 
@@ -256,6 +272,7 @@ def process_signal(m):
     interval = get_setting("interval")
 
     bot.send_message(cid, translate(f"Processing signal for {asset} interval {interval} with LLM...", cid))
+    time.sleep(2)
     try:
         result = run_process_signal()  # renamed import
     except Exception as e:

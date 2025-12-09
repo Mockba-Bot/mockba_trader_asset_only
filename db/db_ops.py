@@ -50,7 +50,8 @@ def initialize_database_tables():
             ('auto_trade', 'True'),
             ('indicator', 'Hybrid'),
             ('leverage', '5'), 
-            ('prompt_text', 'standard')
+            ('prompt_text', 'standard'),
+            ('show_prompt', 'True'),
         ]
         for key, value in default_settings:
             cur.execute("""
