@@ -2,6 +2,9 @@ import os
 import re
 import sys
 import time
+import html
+import re
+import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'machine_learning')))
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
@@ -278,16 +281,23 @@ def process_signal(m):
     except Exception as e:
         result = f"Error: {str(e)}"
 
-    # ⚠️ DO NOT USE MARKDOWN HERE — result may contain *, _, etc.
-    bot.send_message(cid, translate(f"Signal processed. Result: {result}", cid))
+    # SIMPLE FIX: Just send as plain text without any parse mode
+    try:
+        result_str = str(result)
+        # Truncate if too long
+        if len(result_str) > 4000:
+            result_str = result_str[:4000] + "..."
+        
+        bot.send_message(cid, translate(f"Signal processed. Result:\n\n{result_str}", cid))
+    except Exception as e:
+        bot.send_message(cid, translate(f"Signal processed but error displaying result: {str(e)}", cid))
 
     auto_trade = get_setting("auto_trade")
     time.sleep(3)
     if auto_trade and auto_trade.lower() == 'false':
         bot.send_message(cid, translate("Auto Trade is disabled. Please execute the trade manually.", cid))
-    # if is approved and auto_trade is true, send the message (handled in run_process_signal)
     if auto_trade and auto_trade.lower() == 'true':
-        bot.send_message(cid, translate("Auto Trade is enabled. Trade execution handled by the signal processor.", cid))    
+        bot.send_message(cid, translate("Auto Trade is enabled. Trade execution handled by the signal processor.", cid))
 
 
 def ListSettings(m):

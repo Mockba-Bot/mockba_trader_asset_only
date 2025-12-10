@@ -35,31 +35,6 @@ def format_orderbook_as_text(ob: dict) -> str:
     
     return "\n".join(lines)
 
-# Helper: Format approval message
-def format_approval_message(symbol, side, entry, tp, sl, rsi, imbalance, price_delta_pct) -> str:
-    side_emoji = "🟢 LONG" if side == "BUY" else "🔴 SHORT"
-    direction = "COMPRA" if side == "BUY" else "VENTA"
-    
-    msg = (
-        f"✅ <b>TRADE APROBADA</b>\n\n"
-        f"• Activo: <code>{symbol}</code>\n"
-        f"• Dirección: <b>{side_emoji} {direction}</b>\n"
-        f"• Entrada: <code>{entry:.6f}</code>\n"
-        f"• Take Profit: <code>{tp:.6f}</code>\n"
-        f"• Stop Loss: <code>{sl:.6f}</code>\n"
-        f"• RSI: {rsi:.1f}\n"
-        f"• Liquidez: {imbalance:.1f}x ({'bids' if side == 'BUY' else 'asks'})\n"
-        f"• Precio en vivo: {price_delta_pct:+.2f}%\n\n"
-        f"<i>✅ High-conviction setup. Risk:reward ≥ 1:3.</i>"
-    )
-    return msg
-
-# Helper: Format rejection message
-def format_rejection_message(reasons: list) -> str:
-    header = "❌ <b>TRADE REJECTED</b>"
-    bullets = "\n".join(f"• {reason}" for reason in reasons)
-    footer = "\n\n<i>Wait for clearer structure. Discipline = compounding.</i>"
-    return f"{header}\n\n{bullets}{footer}"
 
 def analyze_with_llm(signal_dict: dict) -> dict:
     """LLM analyzes full candle context; Python enforces prices and hard rules."""
@@ -80,7 +55,26 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         }
 
     latest_close = float(df['close'].iloc[-1])
+    
+    # === FIRST create csv_content, THEN trim it ===
     csv_content = df.to_csv(index=False)
+    
+    # TRIM CSV DATA - Critical to avoid timeouts
+    csv_lines = csv_content.split('\n')
+    if len(csv_lines) > 30:
+        # Keep only essential rows for analysis
+        csv_content = '\n'.join(csv_lines[:20] + ["... (middle truncated) ..."] + csv_lines[-10:])
+
+    # === Calculate STRUCTURAL DATA upfront ===
+    last_3_lows = df['low'].tail(3).astype(float).tolist()
+    last_3_highs = df['high'].tail(3).astype(float).tolist()
+    is_buy_structure = last_3_lows[0] <= last_3_lows[1] <= last_3_lows[2]
+    is_sell_structure = last_3_highs[0] >= last_3_highs[1] >= last_3_highs[2]
+    
+    # Get RSI if available
+    latest_rsi = None
+    if 'RSI' in df.columns:
+        latest_rsi = float(df['RSI'].iloc[-1])
 
     # === Fetch live price ===
     live_price = get_close_price(ORDERLY_ACCOUNT_ID, signal_dict['asset'])
@@ -93,6 +87,12 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     # === 2. Auxiliary data ===
     orderbook = get_orderbook(signal_dict['asset'], limit=20)
     orderbook_content = format_orderbook_as_text(orderbook)
+    
+    # Calculate orderbook imbalances
+    bids = sum(float(qty) for _, qty in orderbook.get('bids', [])[:15])
+    asks = sum(float(qty) for _, qty in orderbook.get('asks', [])[:15])
+    bid_imbalance = bids / asks if asks > 0 else 0
+    ask_imbalance = asks / bids if bids > 0 else 0
 
     balance = get_available_balance(ORDERLY_SECRET, ORDERLY_ACCOUNT_ID, ORDERLY_PUBLIC_KEY)
 
@@ -125,15 +125,50 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             "explanation_for_user": "❌ Error en la configuración del riesgo (SL, TP, apalancamiento o saldo)."
         }
 
-    # === 4. Build prompt ===
+    # === 4. Build prompt with STRUCTURAL REQUIREMENTS ===
     user_prompt = get_setting("prompt_text") or ""
     
     hard_rules_note = """
-    ⚠️ Nota para el modelo: Tus valores de entry/tp/sl serán revisados y reemplazados por cálculos reales. 
-    Tu rol es evaluar SI la acción del precio, el libro de órdenes y los indicadores justifican una señal.
-    """
+        🔴🔴🔴 REGLAS ESTRUCTURALES CRÍTICAS - DEBES VERIFICAR ANTES DE APROBAR 🔴🔴🔴
 
-    context = (
+        PARA SEÑAL DE COMPRA (BUY) - TODAS deben cumplirse:
+        1. ✅ ESTRUCTURA ALCISTA: Últimos 3 mínimos ASCENDENTES consecutivos
+        2. ✅ ORDENBOOK FUERTE: Bids total ≥ 1.6x Asks total (top 15 niveles)
+        3. ✅ RSI SEGURO: RSI < 70 (NO sobrecomprado)
+        4. ✅ PRECIO VIVO: Precio actual NO debe caer >0.1% vs cierre
+
+        PARA SEÑAL DE VENTA (SELL) - TODAS deben cumplirse:
+        1. ✅ ESTRUCTURA BAJISTA: Últimos 3 máximos DESCENDENTES consecutivos
+        2. ✅ ORDENBOOK FUERTE: Asks total ≥ 1.6x Bids total (top 15 niveles)
+        3. ✅ RSI SEGURO: RSI > 30 (NO sobrevendido)
+        4. ✅ PRECIO VIVO: Precio actual NO debe subir >0.1% vs cierre
+
+        ⚠️ NO apruebes si falta ALGUNA de estas condiciones estructurales.
+        ⚠️ Los indicadores técnicos (EMA, MACD, etc.) son SECUNDARIOS.
+        """
+
+    # Add structural data to context
+    structural_context = f"""
+        📊 DATOS ESTRUCTURALES ACTUALES (REQUISITOS CRÍTICOS):
+
+        ESTRUCTURA DE PRECIO:
+        • Mínimos últimos 3 velas: {last_3_lows[0]:.6f}, {last_3_lows[1]:.6f}, {last_3_lows[2]:.6f}
+        • ¿Mínimos ascendentes? (requisito BUY): {'✅ SÍ' if is_buy_structure else '❌ NO'}
+        • Máximos últimos 3 velas: {last_3_highs[0]:.6f}, {last_3_highs[1]:.6f}, {last_3_highs[2]:.6f}
+        • ¿Máximos descendentes? (requisito SELL): {'✅ SÍ' if is_sell_structure else '❌ NO'}
+
+        ORDENBOOK (top 15 niveles):
+        • Total Bids: {bids:.2f}
+        • Total Asks: {asks:.2f}
+        • Ratio Bids/Asks: {bid_imbalance:.2f}x (requisito: ≥1.6x para BUY)
+        • Ratio Asks/Bids: {ask_imbalance:.2f}x (requisito: ≥1.6x para SELL)
+
+        INDICADORES DE MOMENTO:
+        • RSI actual: {latest_rsi if latest_rsi else 'N/A'} (BUY: <70, SELL: >30)
+        • Alineación precio vivo: {price_delta_pct:+.3f}% (BUY: ≥-0.1%, SELL: ≤+0.1%)
+        """
+
+    market_context = (
         f"Activo: {signal_dict['asset']}\n"
         f"Precio de cierre de la última vela: {latest_close:.6f}\n"
         f"Precio en vivo (último trade): {live_price:.6f}\n"
@@ -143,177 +178,304 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         f"Nivel de riesgo: {risk_level}%\n"
         f"Tasa de funding actual: {current_funding:.6f}\n"
         f"Liquidaciones cercanas (±2%): {nearby_liquidations}\n\n"
-        f"LIBRO DE ÓRDENES:\n{orderbook_content}\n\n"
-        f"HISTORIAL DE VELAS (CSV, {len(df)} filas, más reciente al final):\n{csv_content}"
+        f"LIBRO DE ÓRDENES (top 20):\n{orderbook_content}\n\n"
+        f"HISTORIAL DE VELAS (30 de {len(df)} filas):\n{csv_content}"
     )
 
-    response_format = """
-    Responde EXCLUSIVAMENTE en JSON válido, SIN texto adicional:
-        {
-        "side": "BUY" | "SELL" | "NONE",
-        "approved": true | false,
-        "entry": número (sugerido, será ajustado),
-        "take_profit": número (sugerido),
-        "stop_loss": número (sugerido),
-        "resume_of_analysis": "razón clara basada en tendencia, estructura, RSI, BB, libro, funding"
-        }
-    """
+    response_format = """{
+        "side": "BUY" o "SELL" o "NONE",
+        "approved": true o false,
+        "entry": 0.0,
+        "take_profit": 0.0,
+        "stop_loss": 0.0,
+        "resume_of_analysis": "Explica tu decisión incluyendo:
+        1. ✅/❌ Verificación de requisitos estructurales
+        2. 📊 Análisis técnico de tendencia e indicadores
+        3. ⚠️ Evaluación de riesgos (funding, liquidaciones)
+        4. 🎯 Justificación de la decisión final
 
-    prompt = user_prompt + hard_rules_note + context + response_format
+        Usa emojis y formato claro con \\n\\n entre secciones."
+        }"""
+
+    prompt = f"""{user_prompt}
+
+    {hard_rules_note}
+
+    {structural_context}
+
+    {market_context}
+
+    📋 INSTRUCCIÓN FINAL:
+    Analiza primero los REQUISITOS ESTRUCTURALES arriba. 
+    SOLO aprueba si TODOS los requisitos para BUY o SELL se cumplen.
+    Luego, usa el análisis técnico para reforzar tu decisión.
+
+    Responde EXCLUSIVAMENTE en este formato JSON:
+    {response_format}"""
 
     if get_setting("show_prompt") == "True":
-        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"📝 Prompt enviado al LLM:\n\n{prompt}")
+        # Show truncated version in Telegram
+        short_prompt = prompt[:1000] + "..." if len(prompt) > 1000 else prompt
+        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"📝 Prompt ({len(prompt)} chars):\n{short_prompt}")
 
-    # === 5. Call LLM ===
-    try:
-        response = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",  # ✅ No trailing spaces
-            headers={"Authorization": f"Bearer {os.getenv('DEEP_SEEK_API_KEY')}"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.0,
-                "max_tokens": 600
-            },
-            timeout=20
-        )
-    except Exception as e:
-        logger.error(f"LLM request failed: {e}")
+    # === 5. Call LLM with FALLBACK ===
+    models_to_try = [
+        ("deepseek-chat", 30),      # Primary - faster, reliable
+        ("deepseek-reasoner", 45),  # Fallback - slower but better reasoning
+    ]
+    
+    response = None
+    used_model = None
+    last_error = None
+    
+    for model_name, timeout_sec in models_to_try:
+        try:
+            logger.info(f"Trying LLM model: {model_name} with timeout {timeout_sec}s")
+            
+            response = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {os.getenv('DEEP_SEEK_API_KEY')}"},
+                json={
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                    "stream": False
+                },
+                timeout=timeout_sec
+            )
+            
+            if response.status_code == 200:
+                used_model = model_name
+                logger.info(f"✓ LLM model {model_name} succeeded")
+                break
+            else:
+                logger.warning(f"✗ LLM model {model_name} failed: {response.status_code}")
+                last_error = f"Status {response.status_code}: {response.text[:200]}"
+                
+        except requests.exceptions.Timeout:
+            logger.warning(f"✗ LLM model {model_name} timeout after {timeout_sec}s")
+            last_error = f"Timeout after {timeout_sec}s"
+            continue
+        except Exception as e:
+            logger.warning(f"✗ LLM model {model_name} error: {str(e)}")
+            last_error = str(e)
+            continue
+    
+    if response is None or response.status_code != 200:
+        logger.error(f"All LLM models failed. Last error: {last_error}")
         return {
             "approved": False,
-            "analysis": f"LLM error: {str(e)}",
-            "explanation_for_user": "⚠️ Error de conexión con el motor de análisis. Intente más tarde."
+            "analysis": f"LLM service unavailable: {last_error}",
+            "explanation_for_user": "⚠️ Servicio de análisis temporalmente no disponible. Intente en 1 minuto."
         }
 
-    if response.status_code != 200:
-        logger.error(f"LLM API error: {response.status_code} - {response.text}")
-        return {
-            "approved": False,
-            "analysis": f"LLM API error: {response.status_code}",
-            "explanation_for_user": "⚠️ El servicio de análisis no está disponible temporalmente."
-        }
-
-    # === 6. Parse LLM response ===
+    # === 6. Parse LLM response with ROBUST error handling ===
     try:
-        content = response.json()['choices'][0]['message']['content']
+        response_json = response.json()
+        content = response_json['choices'][0]['message']['content']
+        
+        logger.info(f"LLM raw response ({used_model}): {content[:200]}...")
+        
+        # Try to extract JSON from response
         json_start = content.find('{')
         json_end = content.rfind('}') + 1
-        llm_result = json.loads(content[json_start:json_end])
+        
+        if json_start == -1 or json_end == 0:
+            # No JSON brackets found, try to parse entire content
+            llm_result = json.loads(content.strip())
+        else:
+            # Extract JSON between brackets
+            json_str = content[json_start:json_end]
+            llm_result = json.loads(json_str)
+            
+        # Validate required fields
+        required = ["side", "approved", "resume_of_analysis"]
+        for field in required:
+            if field not in llm_result:
+                raise ValueError(f"Missing field: {field}")
+                
+    except json.JSONDecodeError as e:
+        logger.error(f"LLM JSON parse failed: {e}")
+        logger.error(f"Raw content that failed to parse: {content[:500]}")
+        
+        # Fallback: extract decision from text
+        content_lower = content.lower()
+        if "buy" in content_lower and ("approved" in content_lower or "true" in content_lower):
+            llm_side = "BUY"
+            llm_approved = True
+            llm_reason = "Análisis aprobado (fallback por error JSON)"
+        elif "sell" in content_lower and ("approved" in content_lower or "true" in content_lower):
+            llm_side = "SELL"
+            llm_approved = True
+            llm_reason = "Análisis aprobado (fallback por error JSON)"
+        else:
+            llm_side = "NONE"
+            llm_approved = False
+            llm_reason = "Señal rechazada (fallback por error JSON)"
+            
+        llm_result = {
+            "side": llm_side,
+            "approved": llm_approved,
+            "resume_of_analysis": llm_reason
+        }
+        
     except Exception as e:
-        logger.warning(f"LLM JSON parse failed: {e}")
+        logger.error(f"Unexpected error parsing LLM response: {e}")
         return {
             "approved": False,
-            "analysis": "LLM returned invalid JSON",
-            "explanation_for_user": "⚠️ El análisis automático falló: respuesta inválida del sistema de IA."
+            "analysis": f"LLM parse error: {str(e)}",
+            "explanation_for_user": "⚠️ Error procesando la respuesta del análisis."
         }
 
     llm_side = llm_result.get("side", "NONE")
     llm_approved = bool(llm_result.get("approved", False))
     llm_reason = llm_result.get("resume_of_analysis", "No analysis")
+    
+    # === Log LLM decision with structural alignment ===
+    logger.info(f"LLM Decision: {llm_side} (Approved: {llm_approved})")
+    logger.info(f"Structural Data - Buy Structure: {is_buy_structure}, Sell Structure: {is_sell_structure}")
+    logger.info(f"Orderbook - Bids/Asks: {bid_imbalance:.2f}x, Asks/Bids: {ask_imbalance:.2f}x")
+    logger.info(f"RSI: {latest_rsi}, Price Delta: {price_delta_pct:.3f}%")
 
     # === 7. HARD RULES ENFORCED IN PYTHON ===
-    last_3_lows = df['low'].tail(3).astype(float).tolist()
-    last_3_highs = df['high'].tail(3).astype(float).tolist()
-    is_buy_structure = last_3_lows[0] <= last_3_lows[1] <= last_3_lows[2]
-    is_sell_structure = last_3_highs[0] >= last_3_highs[1] >= last_3_highs[2]
-
-    bids = sum(float(qty) for _, qty in orderbook.get('bids', [])[:15])
-    asks = sum(float(qty) for _, qty in orderbook.get('asks', [])[:15])
-    bid_imbalance = bids / asks if asks > 0 else float('inf')
-    ask_imbalance = asks / bids if bids > 0 else float('inf')
+    # (Structural checks already calculated above)
+    
     min_imbalance = 1.6
 
     rsi_ok = True
-    latest_rsi = None
-    if 'RSI' in df.columns:
-        latest_rsi = float(df['RSI'].iloc[-1])
+    if latest_rsi:
         if llm_side == "BUY" and latest_rsi > 70:
             rsi_ok = False
+            logger.info(f"RSI check failed for BUY: {latest_rsi} > 70")
         if llm_side == "SELL" and latest_rsi < 30:
             rsi_ok = False
+            logger.info(f"RSI check failed for SELL: {latest_rsi} < 30")
 
-    # Final decision logic
+    # Final decision logic with DETAILED REJECTION TRACKING
     final_approved = False
     final_side = "NONE"
     entry = latest_close
     stop_loss = take_profit = entry
     explanation_for_user = ""
+    
+    # Track rejection reasons for logging
+    rejection_reasons = []
 
     # ✅ BUY: include live price alignment
-    if (llm_side == "BUY" and llm_approved and is_buy_structure 
-        and bid_imbalance >= min_imbalance and rsi_ok 
-        and price_delta_pct >= -0.1):
-        swing_low = min(last_3_lows)
-        min_sl_distance = entry * min_sl_pct
-        stop_loss = min(swing_low * 0.999, entry - min_sl_distance)
-        min_tp_distance = entry * min_tp_pct
-        take_profit = entry + max(3 * (entry - stop_loss), min_tp_distance)
-        final_approved = True
-        final_side = "BUY"
-        explanation_for_user = (
-            "✅ Señal APROBADA para COMPRA.\n"
-            "• Estructura alcista confirmada (mínimos ascendentes).\n"
-            f"• Fuerte demanda en libro de órdenes ({bid_imbalance:.1f}x más bids que asks).\n"
-            f"• RSI en zona segura ({latest_rsi:.1f}).\n"
-            f"• Precio en vivo alineado ({price_delta_pct:+.2f}% desde cierre).\n"
-            f"• TP/SL calculados con gestión de riesgo 1:3."
-        )
+    if llm_side == "BUY" and llm_approved:
+        if not is_buy_structure:
+            rejection_reasons.append("Estructura NO alcista (mínimos no ascendentes)")
+        if bid_imbalance < min_imbalance:
+            rejection_reasons.append(f"Desequilibrio ordenbook insuficiente ({bid_imbalance:.2f}x < {min_imbalance}x)")
+        if not rsi_ok:
+            rejection_reasons.append(f"RSI en zona sobrecomprada ({latest_rsi} > 70)")
+        if price_delta_pct < -0.1:
+            rejection_reasons.append(f"Precio vivo cayendo ({price_delta_pct:.2f}% < -0.1%)")
+        
+        if is_buy_structure and bid_imbalance >= min_imbalance and rsi_ok and price_delta_pct >= -0.1:
+            swing_low = min(last_3_lows)
+            min_sl_distance = entry * min_sl_pct
+            stop_loss = min(swing_low * 0.999, entry - min_sl_distance)
+            min_tp_distance = entry * min_tp_pct
+            take_profit = entry + max(3 * (entry - stop_loss), min_tp_distance)
+            final_approved = True
+            final_side = "BUY"
+            explanation_for_user = (
+                "✅ Señal APROBADA para COMPRA.\n"
+                f"• Estructura alcista confirmada: {last_3_lows[0]:.6f} ≤ {last_3_lows[1]:.6f} ≤ {last_3_lows[2]:.6f}\n"
+                f"• Fuerte demanda en ordenbook: {bid_imbalance:.1f}x más bids que asks\n"
+                f"• RSI en zona segura: {latest_rsi:.1f}\n"
+                f"• Precio en vivo alineado: {price_delta_pct:+.2f}% desde cierre\n"
+                f"• TP/SL calculados con gestión de riesgo 1:3"
+            )
+        else:
+            logger.info(f"BUY signal rejected. Reasons: {rejection_reasons}")
 
     # ✅ SELL: include live price alignment
-    elif (llm_side == "SELL" and llm_approved and is_sell_structure 
-          and ask_imbalance >= min_imbalance and rsi_ok 
-          and price_delta_pct <= 0.1):
-        swing_high = max(last_3_highs)
-        min_sl_distance = entry * min_sl_pct
-        stop_loss = max(swing_high * 1.001, entry + min_sl_distance)
-        min_tp_distance = entry * min_tp_pct
-        take_profit = entry - max(3 * (stop_loss - entry), min_tp_distance)
-        final_approved = True
-        final_side = "SELL"
-        explanation_for_user = (
-            "✅ Señal APROBADA para VENTA.\n"
-            "• Estructura bajista confirmada (máximos descendentes).\n"
-            f"• Fuerte oferta en libro de órdenes ({ask_imbalance:.1f}x más asks que bids).\n"
-            f"• RSI en zona segura ({latest_rsi:.1f}).\n"
-            f"• Precio en vivo alineado ({price_delta_pct:+.2f}% desde cierre).\n"
-            f"• TP/SL calculados con gestión de riesgo 1:3."
-        )
+    elif llm_side == "SELL" and llm_approved:
+        if not is_sell_structure:
+            rejection_reasons.append("Estructura NO bajista (máximos no descendentes)")
+        if ask_imbalance < min_imbalance:
+            rejection_reasons.append(f"Oferta ordenbook insuficiente ({ask_imbalance:.2f}x < {min_imbalance}x)")
+        if not rsi_ok:
+            rejection_reasons.append(f"RSI en zona sobrevendida ({latest_rsi} < 30)")
+        if price_delta_pct > 0.1:
+            rejection_reasons.append(f"Precio vivo subiendo ({price_delta_pct:.2f}% > 0.1%)")
+        
+        if is_sell_structure and ask_imbalance >= min_imbalance and rsi_ok and price_delta_pct <= 0.1:
+            swing_high = max(last_3_highs)
+            min_sl_distance = entry * min_sl_pct
+            stop_loss = max(swing_high * 1.001, entry + min_sl_distance)
+            min_tp_distance = entry * min_tp_pct
+            take_profit = entry - max(3 * (stop_loss - entry), min_tp_distance)
+            final_approved = True
+            final_side = "SELL"
+            explanation_for_user = (
+                "✅ Señal APROBADA para VENTA.\n"
+                f"• Estructura bajista confirmada: {last_3_highs[0]:.6f} ≥ {last_3_highs[1]:.6f} ≥ {last_3_highs[2]:.6f}\n"
+                f"• Fuerte oferta en ordenbook: {ask_imbalance:.1f}x más asks que bids\n"
+                f"• RSI en zona segura: {latest_rsi:.1f}\n"
+                f"• Precio en vivo alineado: {price_delta_pct:+.2f}% desde cierre\n"
+                f"• TP/SL calculados con gestión de riesgo 1:3"
+            )
+        else:
+            logger.info(f"SELL signal rejected. Reasons: {rejection_reasons}")
 
     else:
-        # Build rejection reasons list (for later formatting)
-        rejection_reasons = []
-        if llm_side == "BUY" and not is_buy_structure:
-            rejection_reasons.append("estructura NO alcista (no hay mínimos ascendentes)")
-        if llm_side == "SELL" and not is_sell_structure:
-            rejection_reasons.append("estructura NO bajista (no hay máximos descendentes)")
-        if llm_side == "BUY" and bid_imbalance < min_imbalance:
-            rejection_reasons.append(f"desequilibrio insuficiente en libro ({bid_imbalance:.1f}x < {min_imbalance}x)")
-        if llm_side == "SELL" and ask_imbalance < min_imbalance:
-            rejection_reasons.append(f"oferta insuficiente en libro ({ask_imbalance:.1f}x < {min_imbalance}x)")
-        if not rsi_ok:
-            rejection_reasons.append("RSI en zona de sobrecompra/sobreventa extrema")
-        if not llm_approved:
-            rejection_reasons.append("análisis técnico no confirma la dirección")
-        if llm_side == "BUY" and price_delta_pct < -0.1:
-            rejection_reasons.append(f"precio en vivo cayendo ({price_delta_pct:.2f}%)")
-        if llm_side == "SELL" and price_delta_pct > 0.1:
-            rejection_reasons.append(f"precio en vivo subiendo ({price_delta_pct:.2f}%)")
+        # Build rejection explanation — include live price if relevant
+        if llm_side != "NONE":
+            rejection_reasons.append("LLM no aprobó la señal")
+        elif llm_side == "NONE":
+            rejection_reasons.append("LLM no identificó dirección clara")
 
-    # Return full context for formatting later
-    return {
+        explanation_for_user = (
+            "❌ Señal RECHAZADA.\n" +
+            ("• " + "\n• ".join(rejection_reasons) if rejection_reasons else "• No se cumplieron las condiciones mínimas de seguridad.")
+        )
+
+    # === 8. ALIGNMENT METRICS ===
+    # Calculate how well LLM aligned with structural rules
+    structural_alignment = 0
+    if llm_side == "BUY":
+        if is_buy_structure: structural_alignment += 25
+        if bid_imbalance >= min_imbalance: structural_alignment += 25
+        if rsi_ok: structural_alignment += 25
+        if price_delta_pct >= -0.1: structural_alignment += 25
+    elif llm_side == "SELL":
+        if is_sell_structure: structural_alignment += 25
+        if ask_imbalance >= min_imbalance: structural_alignment += 25
+        if rsi_ok: structural_alignment += 25
+        if price_delta_pct <= 0.1: structural_alignment += 25
+    
+    logger.info(f"Structural Alignment Score: {structural_alignment}%")
+    logger.info(f"Final Decision: Approved={final_approved}, Side={final_side}")
+
+    result = {
         "approved": final_approved,
         "symbol": signal_dict['asset'],
         "side": final_side,
         "entry": float(entry),
         "stop_loss": float(stop_loss),
         "take_profit": float(take_profit),
-        "rsi": latest_rsi,
-        "imbalance": bid_imbalance if final_side == "BUY" else ask_imbalance,
-        "price_delta_pct": price_delta_pct,
-        "rejection_reasons": rejection_reasons,  # ← key for beautiful rejection
         "resume_of_analysis": llm_reason,
+        "analysis": content[:1000] + "..." if len(content) > 1000 else content,
+        "explanation_for_user": explanation_for_user,
+        "llm_model_used": used_model,
+        "structural_alignment": structural_alignment,
+        "rejection_reasons": rejection_reasons if not final_approved else [],
+        "structural_data": {
+            "is_buy_structure": is_buy_structure,
+            "is_sell_structure": is_sell_structure,
+            "bid_imbalance": bid_imbalance,
+            "ask_imbalance": ask_imbalance,
+            "latest_rsi": latest_rsi,
+            "price_delta_pct": price_delta_pct
+        }
     }
-        
+    
+    return result
+
 
 def process_signal():
     """
@@ -326,6 +488,10 @@ def process_signal():
         interval = get_setting("interval")
         min_tp = get_setting("min_tp")
         min_sl = get_setting("min_sl")
+        #
+        min_tp = float(min_tp)
+        min_sl = float(min_sl)
+
         leverage = get_setting("leverage")
         risk_level = get_setting("risk_level")
         indicator = get_setting("indicator")
@@ -365,40 +531,55 @@ def process_signal():
         # --- Call LLM analyzer ---
         llm_result = analyze_with_llm(signal_dict)
 
-        # --- Handle result with beautiful formatting ---
+        # --- Format response ---
         if isinstance(llm_result, dict) and llm_result.get("approved"):
-            # Auto-trade if enabled
-            if get_setting("auto_trade") == "True":
-                try:
-                    order_payload = {
+            try:
+                # the signal was approved, if the auto_trade setting is true, place the order
+                # and create the dict required to place the order, the values are
+                # symbol, side, take_profit, stop_loss, leverage
+                if get_setting("auto_trade") == "True":
+                    signal_dict = {
                         "symbol": llm_result['symbol'],
                         "side": llm_result['side'],
-                        "entry": float(llm_result['entry']),
+                        "entry": float(llm_result['entry']),   
                         "take_profit": float(llm_result['take_profit']),
                         "stop_loss": float(llm_result['stop_loss']),
                         "leverage": leverage
                     }
-                    place_futures_order(order_payload)
-                except Exception as e:
-                    logger.error(f"Auto-trade failed: {e}")
-                    return f"⚠️ Signal approved but order failed: {str(e)}"
+                    place_futures_order(signal_dict)  
+                return (
+                    f"✅ TRADE APPROVED\n"
+                    f"• Symbol: {llm_result['symbol']}\n"
+                    f"• Side: {llm_result['side']}\n"
+                    f"• Entry: {float(llm_result['entry']):.6f}\n"
+                    f"• TP: {float(llm_result['take_profit']):.6f}\n"
+                    f"• SL: {float(llm_result['stop_loss']):.6f}\n"
+                    f"• Reason: {llm_result.get('resume_of_analysis', 'N/A')}"
+                )
 
-            # Return beautiful approval message
-            return format_approval_message(
-                symbol=llm_result['symbol'],
-                side=llm_result['side'],
-                entry=llm_result['entry'],
-                tp=llm_result['take_profit'],
-                sl=llm_result['stop_loss'],
-                rsi=llm_result.get('rsi', 0.0),
-                imbalance=llm_result.get('imbalance', 0.0),
-                price_delta_pct=llm_result.get('price_delta_pct', 0.0)
-            )
-
+            except (KeyError, ValueError, TypeError) as e:
+                return f"⚠️ Trade approved but malformed output: {str(e)}"            
         else:
-            # Return beautiful rejection message
-            reasons = llm_result.get("rejection_reasons", ["No specific reason provided."]) if isinstance(llm_result, dict) else ["Internal rejection."]
-            return format_rejection_message(reasons)
+            if isinstance(llm_result, dict):
+                # Prefer the clean analysis summary
+                reason = llm_result.get("resume_of_analysis") or llm_result.get("analysis", "No reason provided.")
+            else:
+                reason = str(llm_result)
+
+            # Clean up if reason starts with JSON (fallback)
+            reason = str(reason).strip()
+            if reason.startswith("{"):
+                # Try to extract resume_of_analysis from raw JSON string
+                try:
+                    raw_json_start = reason.find('{')
+                    raw_json_end = reason.rfind('}') + 1
+                    raw_json_str = reason[raw_json_start:raw_json_end]
+                    fallback = json.loads(raw_json_str)
+                    reason = fallback.get("resume_of_analysis", "Trade rejected by LLM.")
+                except:
+                    reason = "Trade rejected due to failing hard rules (see analysis)."
+
+            return f"❌ TRADE REJECTED\n• Reason: {reason}"  # Allow slightly more for clarity
 
     except Exception as e:
         logger.exception("Error in process_signal")
