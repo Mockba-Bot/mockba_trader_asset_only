@@ -39,8 +39,11 @@ def initialize_database_tables():
         # key: min_tp, value: 1.0
         # key: min_sl, value: 1.0
         # key: auto_trade, value: true
-        # key: indicator, value: Hybrid
+        # key: indicator, value: Trend-Following
         # key: leverage, value: 5
+        # key: prompt_text, value: standard
+        # key: show_prompt, value: True
+        # key: prompt_mode, value: mixed or user_only
         default_settings = [
             ('asset', 'PERP_BTC_USDC'),
             ('risk_level', '1.5'),
@@ -48,10 +51,12 @@ def initialize_database_tables():
             ('min_tp', '1.0'),
             ('min_sl', '1.0'),
             ('auto_trade', 'True'),
-            ('indicator', 'Hybrid'),
+            ('indicator', 'Trend-Following'),
             ('leverage', '5'), 
             ('prompt_text', 'standard'),
             ('show_prompt', 'True'),
+            ('prompt_mode', 'mixed'),
+            ('llm_model', 'deepseek-chat')
         ]
         for key, value in default_settings:
             cur.execute("""
@@ -91,4 +96,5 @@ def get_all_settings() -> dict:
         cur = conn.cursor()
         cur.execute("SELECT key, value FROM settings")
         rows = cur.fetchall()
-        return {row['key']: row['value'] for row in rows}                  
+        return {row['key']: row['value'] for row in rows}  
+                    

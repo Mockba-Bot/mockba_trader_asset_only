@@ -44,7 +44,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     df = get_historical_data_limit_apolo(
         symbol=signal_dict['asset'],
         interval=signal_dict['interval'],
-        limit=50,
+        limit=80,
         strategy=signal_dict.get('indicator')
     )
     if df is None or len(df) < 20:
@@ -73,8 +73,8 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     
     # Get RSI if available
     latest_rsi = None
-    if 'RSI' in df.columns:
-        latest_rsi = float(df['RSI'].iloc[-1])
+    if 'rsi_14' in df.columns:
+        latest_rsi = float(df['rsi_14'].iloc[-1])
 
     # === Fetch live price ===
     live_price = get_close_price(ORDERLY_ACCOUNT_ID, signal_dict['asset'])
@@ -191,50 +191,81 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     )
 
     response_format = """{
-        "side": "BUY" o "SELL" o "NONE",
-        "approved": true o false,
-        "entry": 0.0,
-        "take_profit": 0.0,
-        "stop_loss": 0.0,
-        "resume_of_analysis": "Explica tu decisión incluyendo:
-        1. ✅/❌ Verificación de requisitos estructurales
-        2. 📊 Análisis técnico de tendencia e indicadores
-        3. ⚠️ Evaluación RSI (nivel + divergencias si detectas)
-        4. ⚠️ Evaluación de otros riesgos (funding, liquidaciones)
-        5. 🎯 Justificación de la decisión final
-
-        Usa emojis y formato claro con \\n\\n entre secciones."
+            "side": "BUY" or "SELL" or "NONE",
+            "approved": true or false,
+            "entry": 0.0,
+            "take_profit": 0.0,
+            "stop_loss": 0.0,
+            "resume_of_analysis":\\n\\n
+        1. Requisitos estructurales:\\n
+        ❌ estructura alcista (mínimos no ascendentes)\\n
+        ❌ estructura bajista (máximos no descendentes)\\n
+        ✅ ordenbook fuerte (1.72x)\\n
+        ✅ rsi no extremo (52.50)\\n
+        ✅ precio vivo alineado (+1.171%)\\n\\n
+        2. Análisis técnico: [breve explicación]\\n\\n
+        3. RSI: [valor y contexto]\\n\\n
+        4. Otros riesgos: [funding, volumen, liquidaciones]\\n\\n
+        5. Conclusión: [razón final]\\n\\n
+        Reglas:\\n
+        - Usa SIEMPRE \\n\\n entre secciones (ej. después de '1.', '2.', etc.).\\n
+        - Cada ítem en la sección 1 va en su propia línea, con ✅ o ❌.\\n
+        - Nada en mayúsculas innecesarias.\\n
+        - Tono neutral, sin dramatismo."
         }"""
+    
+    prompt_mode = get_setting("prompt_mode") # is mode is mixed combine all, else use user prompt only
+    if prompt_mode == "mixed":
 
-    prompt = f"""{user_prompt}
+        prompt = f"""{user_prompt}
 
-    {hard_rules_note}
+        {hard_rules_note}
 
-    {structural_context}
+        {structural_context}
 
-    {market_context}
+        {market_context}
 
-        📋 INSTRUCCIÓN FINAL:
-        1. Analiza primero los REQUISITOS ESTRUCTURALES arriba. 
-        2. SOLO aprueba si TODOS los requisitos críticos para BUY o SELL se cumplen.
-        3. Para RSI: VETO absoluto si >80 (BUY) o <20 (SELL). Entre 70-80 o 20-30 es advertencia, no veto.
-        4. Busca divergencias RSI-precio en los datos históricos.
-        5. Usa análisis técnico para reforzar tu decisión.
+            📋 INSTRUCCIÓN FINAL:
+            1. Analiza primero los REQUISITOS ESTRUCTURALES arriba. 
+            2. SOLO aprueba si TODOS los requisitos críticos para BUY o SELL se cumplen.
+            3. Para RSI: VETO absoluto si >80 (BUY) o <20 (SELL). Entre 70-80 o 20-30 es advertencia, no veto.
+            4. Busca divergencias RSI-precio en los datos históricos.
+            5. Usa análisis técnico para reforzar tu decisión.
 
-        Responde EXCLUSIVAMENTE en este formato JSON:
-        {response_format}"""
+            Responde EXCLUSIVAMENTE en este formato JSON:
+            {response_format}"""
+    else:
+
+        market_context = (
+            f"Activo: {signal_dict['asset']}\n"
+            f"Precio de cierre de la última vela: {latest_close:.6f}\n"
+            f"Saldo disponible: {balance:.2f} USDC\n"
+            f"Apalancamiento: {leverage}x\n"
+            f"Nivel de riesgo: {risk_level}%\n"
+            f"HISTORIAL DE VELAS (30 de {len(df)} filas):\n{csv_content}"
+        )
+            
+        prompt = f"""{user_prompt}
+
+        {market_context}
+
+            📋 INSTRUCCIÓN FINAL:
+            Analiza la señal basándote en los datos de mercado proporcionados.
+
+            Responde EXCLUSIVAMENTE en este formato JSON:
+            {response_format}"""    
 
     if get_setting("show_prompt") == "True":
         # Show truncated version in Telegram
-        short_prompt = prompt[:1000] + "..." if len(prompt) > 1000 else prompt
-        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"📝 Prompt ({len(prompt)} chars):\n{short_prompt}")
+        send_bot_message(int(os.getenv("TELEGRAM_CHAT_ID")), f"📝 Prompt ({len(prompt)} chars):\n{prompt}...")
 
     # === 5. Call LLM ===    
     response = None
     used_model = None
     last_error = None
-    model_name = "deepseek-reasoner"
-    timeout_sec = 45
+    model_name = get_setting("llm_model")
+    timeout_sec = 30
+    
     
     try:
         logger.info(f"Trying LLM model: {model_name} with timeout {timeout_sec}s")
@@ -478,9 +509,11 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         elif llm_side == "NONE":
             rejection_reasons.append("LLM no identificó dirección clara")
 
+        # Build concise user-facing rejection
         explanation_for_user = (
-            "❌ Señal RECHAZADA.\n" +
-            ("• " + "\n• ".join(rejection_reasons) if rejection_reasons else "• No se cumplieron las condiciones mínimas de seguridad.")
+            f"❌ Señal RECHAZADA ({llm_side if llm_side != 'NONE' else 'N/A'})\n"
+            + "\n".join(f"• {r}" for r in rejection_reasons[:2]) + "\n"
+            + "→ Esperar alineación estructural."
         )
 
     # === 8. ALIGNMENT METRICS ===
@@ -632,8 +665,10 @@ def process_signal():
                     reason = fallback.get("resume_of_analysis", "Trade rejected by LLM.")
                 except:
                     reason = "Trade rejected due to failing hard rules (see analysis)."
+            
+            logger.info(f"Trade rejected. Reason: {reason}")
 
-            return f"❌ TRADE REJECTED\n• Reason: {reason}"  # Allow slightly more for clarity
+            return f"Trade rejected\n• Reason: {reason}"  # Allow slightly more for clarity
 
     except Exception as e:
         logger.exception("Error in process_signal")

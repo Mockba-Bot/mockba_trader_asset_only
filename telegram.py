@@ -102,6 +102,8 @@ def callback_handler(call):
         'ListSettings': ListSettings,
         'ProcessSignal': process_signal,
         'set_show_prompt': set_show_prompt,
+        'prompt_mode': set_prompt_mode,
+        'set_llm_model': set_llm_model
     }
     func = options.get(call.data)
     if func:
@@ -124,9 +126,15 @@ def settings(m):
         "set_indicator": "📊 Indicator",
         "set_leverage": "⚖️ Leverage",
         "set_prompt": "💬 Prompt Text",
-        "set_show_prompt": "👁️ Show Prompt"
+        "set_show_prompt": "👁️ Show Prompt",
+        "prompt_mode": "📝 Prompt Mode",
+       #  "set_llm_model": "🧠 LLM Model"
     }
-    buttons = [[InlineKeyboardButton(translate(v, cid), callback_data=k)] for k, v in labels.items()]
+    buttons = []
+    items = list(labels.items())
+    for i in range(0, len(items), 2):
+        row = [InlineKeyboardButton(translate(label, cid), callback_data=key) for key, label in items[i:i+2]]
+        buttons.append(row)
     bot.send_message(cid, translate("Available options.", cid), reply_markup=InlineKeyboardMarkup(buttons))
 
 
@@ -164,13 +172,20 @@ def upsert_assets(m):
         if valor not in ("True", "False"):
             valid, error_msg = False, "Auto Trade must be 'True' or 'False'"
     elif gp1 == "interval":
-        if not re.match(r"^\d+[mhd]$", valor.lower()):
+        if not re.match(r"^\d+[mhd]$", valor.lower()) and not valor.lower() in ("5m", "15m", "30m", "1h", "4h", "1d"):
             valid, error_msg = False, "Invalid interval (e.g., 15m, 1h)"
     # show prompt validation
     elif gp1 == "show_prompt":
         if valor not in ("True", "False"):
             valid, error_msg = False, "Show Prompt must be 'True' or 'False'"        
-    # prompt_text: no validation
+    # prompt mode validation
+    elif gp1 == "prompt_mode":
+        if valor not in ("mixed", "user_only"):
+            valid, error_msg = False, "Prompt Mode must be 'mixed' or 'user_only'"
+    # llm model validation
+    elif gp1 == "llm_model":
+        if valor not in ("deepseek-reasoner", "deepseek-chat"):
+            valid, error_msg = False, "LLM Model must be 'deepseek-reasoner' or 'deepseek-chat'"        
 
     if not valid:
         bot.send_message(cid, translate(f"❌ {error_msg}. Try again:", cid), reply_markup=markup)
@@ -201,7 +216,10 @@ def set_interval(m):
     if m.chat.type != 'private': return
     global gp1; gp1 = "interval"
     if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
-    bot.send_message(m.chat.id, translate("Enter interval (e.g., 15m, 1h, 4h)", m.chat.id))
+    markup = types.ReplyKeyboardMarkup(row_width=1)
+    for opt in ['5m', '15m', '30m', '1h', '4h', '1d']:
+        markup.add(opt)
+    bot.send_message(m.chat.id, translate("Enter interval (e.g., 15m, 1h, 4h)", m.chat.id), reply_markup=markup)
     bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
 def set_min_tp(m):
@@ -261,6 +279,27 @@ def set_show_prompt(m):
     markup = types.ReplyKeyboardMarkup(row_width=2)
     markup.add("True", "False", "CANCEL")
     bot.send_message(cid, translate("Select Show Prompt:", cid), reply_markup=markup)
+    bot.register_next_step_handler_by_chat_id(cid, upsert_assets) 
+
+def set_prompt_mode(m):
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "prompt_mode"
+    cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
+    markup = types.ReplyKeyboardMarkup(row_width=1)
+    markup.add("mixed", "user_only", "CANCEL")
+    bot.send_message(cid, translate("Select Prompt Mode:", cid), reply_markup=markup)
+    bot.register_next_step_handler_by_chat_id(cid, upsert_assets)
+
+def set_llm_model(m):
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "llm_model"
+    cid = m.chat.id
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
+    markup = types.ReplyKeyboardMarkup(row_width=1)
+    for opt in ['deepseek-reasoner', 'deepseek-chat', 'CANCEL']:
+        markup.add(opt)
+    bot.send_message(cid, translate("Select LLM Model:", cid), reply_markup=markup)
     bot.register_next_step_handler_by_chat_id(cid, upsert_assets)    
 
 
@@ -307,29 +346,69 @@ def ListSettings(m):
     if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid):
         return
     
-    bot.send_message(cid, translate("Fetching all settings...", cid))
-
     settings = get_all_settings()
+    
+    # Add defaults for missing important settings
+    if 'prompt_mode' not in settings:
+        settings['prompt_mode'] = os.getenv('PROMPT_MODE', 'mixed')
+    
     if not settings:
-        bot.send_message(cid, translate("No settings found.", cid))
+        bot.send_message(cid, "❌ No settings configured", parse_mode='HTML')
         return
-
-    lines = ["🔹 <b>Current Bot Settings</b>"]
-    for key, value in sorted(settings.items()):
-        # Format key in title case (optional)
-        display_key = key.replace("_", " ").title()
-        lines.append(f"▸ {display_key}: <code>{value}</code>")
-
-    # Join with newlines
-    settings_text = "\n".join(lines)
-
-    # Use HTML mode for safe formatting (bold + code blocks)
-    try:
-        bot.send_message(cid, settings_text, parse_mode='HTML')
-    except Exception:
-        # Fallback to plain text if HTML fails
-        plain_text = "Current Settings:\n" + "\n".join(f"{k}: {v}" for k, v in sorted(settings.items()))
-        bot.send_message(cid, plain_text)
+    
+    # Build compact message
+    message = "<b>⚙️ BOT SETTINGS</b>\n"
+    message += "═══════════════════\n\n"
+    
+    # Trading settings section
+    message += "<b>📈 Trading:</b>\n"
+    trading_keys = [
+        ("💰", "asset", "Asset"),
+        ("⏱️", "interval", "Interval"),
+        ("📊", "indicator", "Strategy"),
+        ("⚖️", "leverage", "Leverage"),
+        ("⚠️", "risk_level", "Risk"),
+        ("🎯", "min_tp", "Min TP"),
+        ("🎯", "min_sl", "Min SL")
+    ]
+    
+    for emoji, key, label in trading_keys:
+        if key in settings:
+            value = settings[key]
+            if key in ["min_tp", "min_sl"]:
+                value = f"{value}%"
+            elif key == "leverage":
+                value = f"{value}x"
+            message += f"{emoji} <b>{label}:</b> <code>{value}</code>\n"
+    
+    message += "\n<b>⚙️ Configuration:</b>\n"
+    config_keys = [
+        ("🤖", "auto_trade", "Auto Trade"),
+        ("💬", "prompt_text", "Prompt"),
+        ("🔄", "prompt_mode", "Prompt Mode"),
+        ("👁️", "show_prompt", "Show Prompt"),
+        ("🧠", "llm_model", "LLM Model")
+    ]
+    
+    for emoji, key, label in config_keys:
+        if key in settings:
+            value = settings[key]
+            if key == "auto_trade":
+                value = "✅ ON" if str(value).lower() == "true" else "❌ OFF"
+            elif key == "show_prompt":
+                value = "✅ YES" if str(value).lower() == "true" else "❌ NO"
+            elif key == "prompt_text" and len(value) > 25:
+                value = value[:25] + "..."
+            elif key == "llm_model":
+                value = "🤖" + str(value)
+            message += f"{emoji} <b>{label}:</b> <code>{value}</code>\n"
+    
+    # Add timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    message += f"\n⏰ <i>Updated: {timestamp} | Total: {len(settings)} settings</i>"
+    
+    bot.send_message(cid, message, parse_mode='HTML')
 
 
 # Start polling
