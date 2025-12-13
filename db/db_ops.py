@@ -56,6 +56,7 @@ def initialize_database_tables():
             ('prompt_text', 'standard'),
             ('show_prompt', 'True'),
             ('prompt_mode', 'mixed'),
+            ('order_book_threshold', '1.6'),
             ('llm_model', 'deepseek-chat')
         ]
         for key, value in default_settings:

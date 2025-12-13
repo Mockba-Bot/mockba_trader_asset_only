@@ -2,9 +2,7 @@ import os
 import re
 import sys
 import time
-import html
 import re
-import json
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'machine_learning')))
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
@@ -103,7 +101,8 @@ def callback_handler(call):
         'ProcessSignal': process_signal,
         'set_show_prompt': set_show_prompt,
         'prompt_mode': set_prompt_mode,
-        'set_llm_model': set_llm_model
+        'set_llm_model': set_llm_model,
+        'set_order_book_threshold': set_order_book_threshold
     }
     func = options.get(call.data)
     if func:
@@ -128,6 +127,7 @@ def settings(m):
         "set_prompt": "💬 Prompt Text",
         "set_show_prompt": "👁️ Show Prompt",
         "prompt_mode": "📝 Prompt Mode",
+        "set_order_book_threshold": "📚 Order Book Threshold",
        #  "set_llm_model": "🧠 LLM Model"
     }
     buttons = []
@@ -185,7 +185,11 @@ def upsert_assets(m):
     # llm model validation
     elif gp1 == "llm_model":
         if valor not in ("deepseek-reasoner", "deepseek-chat"):
-            valid, error_msg = False, "LLM Model must be 'deepseek-reasoner' or 'deepseek-chat'"        
+            valid, error_msg = False, "LLM Model must be 'deepseek-reasoner' or 'deepseek-chat'"
+    # order book threshold validation
+    elif gp1 == "order_book_threshold":
+        if not is_float(valor) or float(valor) <= 0:
+            valid, error_msg = False, "Order Book Threshold must be a positive number (e.g., 1.6)"                
 
     if not valid:
         bot.send_message(cid, translate(f"❌ {error_msg}. Try again:", cid), reply_markup=markup)
@@ -300,7 +304,14 @@ def set_llm_model(m):
     for opt in ['deepseek-reasoner', 'deepseek-chat', 'CANCEL']:
         markup.add(opt)
     bot.send_message(cid, translate("Select LLM Model:", cid), reply_markup=markup)
-    bot.register_next_step_handler_by_chat_id(cid, upsert_assets)    
+    bot.register_next_step_handler_by_chat_id(cid, upsert_assets)
+
+def set_order_book_threshold(m):
+    if m.chat.type != 'private': return
+    global gp1; gp1 = "order_book_threshold"
+    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(m.chat.id): return
+    bot.send_message(m.chat.id, translate("Enter Order Book Threshold (e.g., 1.6)", m.chat.id))
+    bot.register_next_step_handler_by_chat_id(m.chat.id, upsert_assets)
 
 
 # === Main Actions ===
@@ -370,6 +381,8 @@ def ListSettings(m):
         ("⚠️", "risk_level", "Risk"),
         ("🎯", "min_tp", "Min TP"),
         ("🎯", "min_sl", "Min SL")
+        # order book threshold
+        ,("📚", "order_book_threshold", "Order Book Thresh")
     ]
     
     for emoji, key, label in trading_keys:

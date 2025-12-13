@@ -376,7 +376,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     # === 7. HARD RULES ENFORCED IN PYTHON ===
     # (Structural checks already calculated above)
     
-    min_imbalance = 1.6
+    min_imbalance = float(get_setting("order_book_threshold") or 1.6)
 
     # === IMPROVED RSI LOGIC ===
     rsi_warning = False
