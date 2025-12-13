@@ -124,22 +124,24 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             "analysis": f"Invalid settings: {e}",
             "explanation_for_user": "❌ Error en la configuración del riesgo (SL, TP, apalancamiento o saldo)."
         }
+    
+    orderbook_threshold = float(get_setting("order_book_threshold") or 1.6)
 
     # === 4. Build prompt with STRUCTURAL REQUIREMENTS ===
     user_prompt = get_setting("prompt_text") or ""
     
-    hard_rules_note = """
+    hard_rules_note = f"""
         🔴🔴🔴 REGLAS ESTRUCTURALES CRÍTICAS - DEBES VERIFICAR ANTES DE APROBAR 🔴🔴🔴
 
         PARA SEÑAL DE COMPRA (BUY) - TODAS deben cumplirse:
         1. ✅ ESTRUCTURA ALCISTA: Últimos 3 mínimos ASCENDENTES consecutivos
-        2. ✅ ORDENBOOK FUERTE: Bids total ≥ 1.6x Asks total (top 15 niveles)
+        2. ✅ ORDENBOOK FUERTE: Bids total ≥ {orderbook_threshold}x Asks total (top 15 niveles)
         3. ✅ RSI NO EN EXTREMO PELIGROSO: RSI < 80 (NO sobrecomprado extremo)
         4. ✅ PRECIO VIVO: Precio actual NO debe caer >0.1% vs cierre
 
         PARA SEÑAL DE VENTA (SELL) - TODAS deben cumplirse:
         1. ✅ ESTRUCTURA BAJISTA: Últimos 3 máximos DESCENDENTES consecutivos
-        2. ✅ ORDENBOOK FUERTE: Asks total ≥ 1.6x Bids total (top 15 niveles)
+        2. ✅ ORDENBOOK FUERTE: Asks total ≥ {orderbook_threshold}x Bids total (top 15 niveles)
         3. ✅ RSI NO EN EXTREMO PELIGROSO: RSI > 20 (NO sobrevendido extremo)
         4. ✅ PRECIO VIVO: Precio actual NO debe subir >0.1% vs cierre
 
