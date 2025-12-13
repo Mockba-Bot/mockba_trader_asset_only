@@ -168,8 +168,8 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         ORDENBOOK (top 15 niveles):
         • Total Bids: {bids:.2f}
         • Total Asks: {asks:.2f}
-        • Ratio Bids/Asks: {bid_imbalance:.2f}x (requisito: ≥1.6x para BUY)
-        • Ratio Asks/Bids: {ask_imbalance:.2f}x (requisito: ≥1.6x para SELL)
+        • Ratio Bids/Asks: {bid_imbalance:.2f}x (requisito: ≥{orderbook_threshold}x para BUY)
+        • Ratio Asks/Bids: {ask_imbalance:.2f}x (requisito: ≥{orderbook_threshold}x para SELL)
 
         INDICADORES DE MOMENTO:
         • RSI actual: {latest_rsi if latest_rsi else 'N/A'} 
