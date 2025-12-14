@@ -184,7 +184,7 @@ def callback_handler(call):
             'set_leverage': set_leverage,
             'set_prompt': set_prompt,
             'ListSettings': ListSettings,
-            'ProcessSignal': process_signal,
+            'ProcessSignal': execute_signal,
             'set_show_prompt': set_show_prompt,
             'set_prompt_mode': set_prompt_mode,
             'set_order_book_threshold': set_order_book_threshold
@@ -638,27 +638,23 @@ def set_order_book_threshold(m):
 
 # === Main Actions ===
 
-def process_signal(m):
+def execute_signal(m, asset=None):
     if m.chat.type != 'private': return
     cid = m.chat.id
     if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
 
-    assets = get_asset_list()
-    if not assets:
-        bot.send_message(cid, translate("❌ No assets configured. Please add assets first.", cid))
+    if asset is None:
+        assets = get_asset_list()
+        if not assets:
+            bot.send_message(cid, translate("❌ No assets configured. Please add assets first.", cid))
+            return
+
+        markup = InlineKeyboardMarkup()
+        for asset_item in assets:
+            markup.add(InlineKeyboardButton(f"📡 {asset_item}", callback_data=f"exec_sig:{asset_item}"))
+        
+        bot.send_message(cid, translate("Select asset to process:", cid), reply_markup=markup)
         return
-
-    markup = InlineKeyboardMarkup()
-    for asset in assets:
-        markup.add(InlineKeyboardButton(f"📡 {asset}", callback_data=f"exec_sig:{asset}"))
-    
-    bot.send_message(cid, translate("Select asset to process:", cid), reply_markup=markup)
-
-
-def execute_signal(m, asset):
-    if m.chat.type != 'private': return
-    cid = m.chat.id
-    if str(os.getenv("TELEGRAM_CHAT_ID")) != str(cid): return
 
     interval = get_setting("interval")
 
