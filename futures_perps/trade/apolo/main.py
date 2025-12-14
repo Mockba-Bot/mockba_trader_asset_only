@@ -1,4 +1,6 @@
+from datetime import timedelta
 import json
+import time
 import requests
 import os
 import sys
@@ -566,14 +568,14 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     return result
 
 
-def process_signal():
+def process_signal(asset_override=None):
     """
     Main entry point for signal processing.
     Called by Telegram bot. Must return a string.
     """
     try:
         # --- Fetch required settings ---
-        asset = get_setting("asset")
+        asset = asset_override if asset_override else get_setting("asset")
         interval = get_setting("interval")
         min_tp = get_setting("min_tp")
         min_sl = get_setting("min_sl")
@@ -626,7 +628,8 @@ def process_signal():
                 # the signal was approved, if the auto_trade setting is true, place the order
                 # and create the dict required to place the order, the values are
                 # symbol, side, take_profit, stop_loss, leverage
-                if get_setting("auto_trade") == "True":
+                auto_trade_val = get_setting("auto_trade")
+                if auto_trade_val == "True" or auto_trade_val == "Automatic":
                     signal_dict = {
                         "symbol": llm_result['symbol'],
                         "side": llm_result['side'],
@@ -675,3 +678,43 @@ def process_signal():
     except Exception as e:
         logger.exception("Error in process_signal")
         return f"🔥 Internal error: {str(e)}"
+
+def autotrade():
+    logger.info("Starting autotrade loop...")
+    while True:
+        try:
+            if get_setting("auto_trade") == "Automatic":
+                # Map interval string to timedelta
+                interval_str = get_setting("interval")
+                interval_map = {
+                    '5m': timedelta(minutes=5),
+                    '15m': timedelta(minutes=15),
+                    '30m': timedelta(minutes=30),
+                    '1h': timedelta(hours=1),
+                    '4h': timedelta(hours=4),
+                    '1d': timedelta(days=1)
+                }
+                trade_interval = interval_map.get(interval_str, timedelta(hours=1))
+                
+                automated_assets = get_setting("automated_assets")
+                if automated_assets:
+                    asset_list = [a.strip() for a in automated_assets.split(',') if a.strip()]
+                    logger.info(f"Processing automated assets: {asset_list}")
+                    for asset in asset_list:
+                        try:
+                            process_signal(asset_override=asset)
+                        except Exception as e:
+                            logger.exception(f"Error processing automated asset {asset}: {e}")
+                        time.sleep(10)
+                else:
+                    logger.info("Auto trade is Automatic but no assets configured.")
+                
+                # Sleep for the interval
+                time.sleep(trade_interval.total_seconds())
+            else:
+                # Not automatic, sleep and check again later
+                time.sleep(60)
+        except Exception as e:
+            logger.error(f"Error in autotrade loop: {e}")
+            time.sleep(60)        
+            

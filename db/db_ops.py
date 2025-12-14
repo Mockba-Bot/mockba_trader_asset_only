@@ -46,15 +46,16 @@ def initialize_database_tables():
         # key: prompt_mode, value: mixed or user_only
         default_settings = [
             ('asset', 'PERP_BTC_USDC'),
+            ('automated_assets', ''),
             ('risk_level', '1.5'),
             ('interval', '1h'),
             ('min_tp', '1.0'),
             ('min_sl', '1.0'),
-            ('auto_trade', 'True'),
+            ('auto_trade', 'False'),
             ('indicator', 'Trend-Following'),
             ('leverage', '5'), 
-            ('prompt_text', 'standard'),
-            ('show_prompt', 'True'),
+            ('prompt_text', 'Analiza el asset a continuación y proporciona una recomendación de trading basada en las tendencias actuales del mercado y los indicadores técnicos.'),
+            ('show_prompt', 'False'),
             ('prompt_mode', 'mixed'),
             ('order_book_threshold', '1.6'),
             ('llm_model', 'deepseek-chat')
@@ -97,5 +98,51 @@ def get_all_settings() -> dict:
         cur = conn.cursor()
         cur.execute("SELECT key, value FROM settings")
         rows = cur.fetchall()
-        return {row['key']: row['value'] for row in rows}  
+        return {row['key']: row['value'] for row in rows}
+
+# Helper functions for managing the asset list (stored as comma-separated string)
+
+def get_asset_list() -> list:
+    """Returns the asset setting as a list of strings."""
+    val = get_setting('asset')
+    if not val:
+        return []
+    return [x.strip() for x in val.split(',') if x.strip()]
+
+def add_asset(asset: str):
+    """Adds an asset to the list if not present."""
+    assets = get_asset_list()
+    if asset not in assets:
+        assets.append(asset)
+        upsert_setting('asset', ','.join(assets))
+
+def remove_asset(asset: str):
+    """Removes an asset from the list."""
+    assets = get_asset_list()
+    if asset in assets:
+        assets.remove(asset)
+        upsert_setting('asset', ','.join(assets))
+
+# Helper functions for managing the automated_assets list
+
+def get_automated_asset_list() -> list:
+    """Returns the automated_assets setting as a list of strings."""
+    val = get_setting('automated_assets')
+    if not val:
+        return []
+    return [x.strip() for x in val.split(',') if x.strip()]
+
+def add_automated_asset(asset: str):
+    """Adds an asset to the automated_assets list if not present."""
+    assets = get_automated_asset_list()
+    if asset not in assets:
+        assets.append(asset)
+        upsert_setting('automated_assets', ','.join(assets))
+
+def remove_automated_asset(asset: str):
+    """Removes an asset from the automated_assets list."""
+    assets = get_automated_asset_list()
+    if asset in assets:
+        assets.remove(asset)
+        upsert_setting('automated_assets', ','.join(assets))  
                     
