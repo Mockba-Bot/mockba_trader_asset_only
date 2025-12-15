@@ -702,6 +702,7 @@ def autotrade():
                     logger.info(f"Processing automated assets: {asset_list}")
                     for asset in asset_list:
                         try:
+                            logger.info(f"Processing autotrade for each interval {interval_str} asset: {asset}")
                             process_signal(asset_override=asset)
                         except Exception as e:
                             logger.exception(f"Error processing automated asset {asset}: {e}")
