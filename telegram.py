@@ -716,7 +716,7 @@ def ListSettings(m):
         ("🎯", "min_tp", "Min TP"),
         ("🎯", "min_sl", "Min SL")
         # order book threshold
-        ,("📚", "order_book_threshold", "Order Book Thresh")
+        ,("📚", "order_book_threshold", "Order Book Threshold")
     ]
     
     for emoji, key, label in trading_keys:
