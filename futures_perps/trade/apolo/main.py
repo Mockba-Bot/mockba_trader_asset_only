@@ -194,13 +194,13 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         f"HISTORIAL DE VELAS (30 de {len(df)} filas):\n{csv_content}"
     )
 
-    response_format = """{
-            "side": "BUY" or "SELL" or "NONE",
-            "approved": true or false,
-            "entry": 0.0,
-            "take_profit": 0.0,
-            "stop_loss": 0.0,
-            "resume_of_analysis":\\n\\n
+    response_format_mixed = """{
+        "side": "BUY" or "SELL" or "NONE",
+        "approved": true or false,
+        "entry": 0.0,
+        "take_profit": 0.0,
+        "stop_loss": 0.0,
+        "resume_of_analysis":\\n\\n
         1. Requisitos estructurales:\\n
         ❌ estructura alcista (mínimos no ascendentes)\\n
         ❌ estructura bajista (máximos no descendentes)\\n
@@ -217,6 +217,18 @@ def analyze_with_llm(signal_dict: dict) -> dict:
         - Nada en mayúsculas innecesarias.\\n
         - Tono neutral, sin dramatismo."
         }"""
+    
+    response_format = """{
+        "side": "BUY" or "SELL" or "NONE",
+        "approved": true or false,
+        "entry": 0.0,
+        "take_profit": 0.0,
+        "stop_loss": 0.0,
+        "resume_of_analysis":\\n\\n
+         Reglas:\\n
+        - Nada en mayúsculas innecesarias.\\n
+        - Tono neutral, sin dramatismo."
+    }"""    
     
     prompt_mode = get_setting("prompt_mode") # is mode is mixed combine all, else use user prompt only
     if prompt_mode == "mixed":
@@ -237,7 +249,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
             5. Usa análisis técnico para reforzar tu decisión.
 
             Responde EXCLUSIVAMENTE en este formato JSON:
-            {response_format}"""
+            {response_format_mixed}"""
     else:
 
         market_context = (
