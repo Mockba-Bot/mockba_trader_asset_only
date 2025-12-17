@@ -227,6 +227,7 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     "resume_of_analysis":\\n\\n
       Reglas:\\n
     - Usa SIEMPRE \\n\\n entre secciones (ej. después de '1.', '2.', etc.).\\n
+    - Cada ítem en la sección 1 va en su propia línea, con ✅ o ❌.\\n
     - Nada en mayúsculas innecesarias.\\n
     - Tono neutral, sin dramatismo."
     }"""    
