@@ -195,39 +195,40 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     )
 
     response_format_mixed = """{
-        "side": "BUY" or "SELL" or "NONE",
-        "approved": true or false,
-        "entry": 0.0,
-        "take_profit": 0.0,
-        "stop_loss": 0.0,
-        "resume_of_analysis":\\n\\n
-        1. Requisitos estructurales:\\n
-        ❌ estructura alcista (mínimos no ascendentes)\\n
-        ❌ estructura bajista (máximos no descendentes)\\n
-        ✅ ordenbook fuerte (1.72x)\\n
-        ✅ rsi no extremo (52.50)\\n
-        ✅ precio vivo alineado (+1.171%)\\n\\n
-        2. Análisis técnico: [breve explicación]\\n\\n
-        3. RSI: [valor y contexto]\\n\\n
-        4. Otros riesgos: [funding, volumen, liquidaciones]\\n\\n
-        5. Conclusión: [razón final]\\n\\n
-        Reglas:\\n
-        - Usa SIEMPRE \\n\\n entre secciones (ej. después de '1.', '2.', etc.).\\n
-        - Cada ítem en la sección 1 va en su propia línea, con ✅ o ❌.\\n
-        - Nada en mayúsculas innecesarias.\\n
-        - Tono neutral, sin dramatismo."
+    "side": "BUY" or "SELL" or "NONE",
+    "approved": true or false,
+    "entry": 0.0,
+    "take_profit": 0.0,
+    "stop_loss": 0.0,
+    "resume_of_analysis":\\n\\n
+    1. Requisitos estructurales:\\n
+    ❌ estructura alcista (mínimos no ascendentes)\\n
+    ❌ estructura bajista (máximos no descendentes)\\n
+    ✅ ordenbook fuerte (1.72x)\\n
+    ✅ rsi no extremo (52.50)\\n
+    ✅ precio vivo alineado (+1.171%)\\n\\n
+    2. Análisis técnico: [breve explicación]\\n\\n
+    3. RSI: [valor y contexto]\\n\\n
+    4. Otros riesgos: [funding, volumen, liquidaciones]\\n\\n
+    5. Conclusión: [razón final]\\n\\n
+    Reglas:\\n
+    - Usa SIEMPRE \\n\\n entre secciones (ej. después de '1.', '2.', etc.).\\n
+    - Cada ítem en la sección 1 va en su propia línea, con ✅ o ❌.\\n
+    - Nada en mayúsculas innecesarias.\\n
+    - Tono neutral, sin dramatismo."
         }"""
     
     response_format = """{
-        "side": "BUY" or "SELL" or "NONE",
-        "approved": true or false,
-        "entry": 0.0,
-        "take_profit": 0.0,
-        "stop_loss": 0.0,
-        "resume_of_analysis":\\n\\n
-         Reglas:\\n
-        - Nada en mayúsculas innecesarias.\\n
-        - Tono neutral, sin dramatismo."
+    "side": "BUY" or "SELL" or "NONE",
+    "approved": true or false,
+    "entry": 0.0,
+    "take_profit": 0.0,
+    "stop_loss": 0.0,
+    "resume_of_analysis":\\n\\n
+      Reglas:\\n
+    - Usa SIEMPRE \\n\\n entre secciones (ej. después de '1.', '2.', etc.).\\n
+    - Nada en mayúsculas innecesarias.\\n
+    - Tono neutral, sin dramatismo."
     }"""    
     
     prompt_mode = get_setting("prompt_mode") # is mode is mixed combine all, else use user prompt only
@@ -265,11 +266,11 @@ def analyze_with_llm(signal_dict: dict) -> dict:
 
         {market_context}
 
-            📋 INSTRUCCIÓN FINAL:
-            Analiza la señal basándote en los datos de mercado proporcionados.
+        📋 INSTRUCCIÓN FINAL:
+        Analiza la señal basándote en los datos de mercado proporcionados.
 
-            Responde EXCLUSIVAMENTE en este formato JSON:
-            {response_format}"""    
+        Responde EXCLUSIVAMENTE en este formato JSON:
+        {response_format}"""    
 
     if get_setting("show_prompt") == "True":
         # Show truncated version in Telegram
