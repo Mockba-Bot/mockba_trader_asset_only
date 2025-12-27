@@ -502,9 +502,17 @@ def place_futures_order(signal: dict):
     positional_tp_sl = next((row for row in rows if row.get("algo_type") == "POSITIONAL_TP_SL"), {})
     order_id = positional_tp_sl.get("order_id", "0")
 
+    # Before your return statement, transform the side
+    if side_str == "SELL":
+        final_side_display = "🔴 SHORT"
+    elif side_str == "BUY":
+        final_side_display = "🟢 LONG"
+    else:
+        final_side_display = side_str
+
     msg = (
         f"✅ Order created: {symbol}\n"
-        f"Side: {side_str}\n"
+        f"Side: {final_side_display}\n"
         f"Lev: {round(leverage, 2)}x\n"
         f"Qty: {round(qty, 4)}\n"
         f"Price: {round(live_price, 4)}\n"

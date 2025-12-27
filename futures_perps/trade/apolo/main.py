@@ -440,17 +440,17 @@ def analyze_with_llm(signal_dict: dict) -> dict:
     logger.info(f"Prompt mode: {prompt_mode} | Approved: {final_approved}, Side: {final_side}")
 
     # Before your return statement, transform the side
-    if final_side == "SELL":
-        final_side_display = "🔴 SHORT"
-    elif final_side == "BUY":
-        final_side_display = "🟢 LONG"
-    else:
-        final_side_display = final_side
+    # if final_side == "SELL":
+    #     final_side_display = "🔴 SHORT"
+    # elif final_side == "BUY":
+    #     final_side_display = "🟢 LONG"
+    # else:
+    #     final_side_display = final_side
 
     return {
         "approved": final_approved,
         "symbol": signal_dict['asset'],
-        "side": final_side_display,
+        "side": final_side,
         "entry": float(entry),
         "stop_loss": float(stop_loss),
         "take_profit": float(take_profit),
